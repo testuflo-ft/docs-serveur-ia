@@ -1,0 +1,378 @@
+--- ref-lance-index.js	2026-10-29 19:33:28.157557677 +0800
++++ candidate-lance-index.js	2026-10-29 19:39:36.909894044 +0800
+@@ -288,6 +288,25 @@
+     return true;
+   }
+ 
++  /**
++   * PUR-02 PATCH: deleteDocumentFromNamespace
++   *
++   * Changes vs original:
++   * 1. Uses prisma.document_vectors.findMany() directly instead of
++   *    DocumentVectors.where(), which silently absorbs SQL errors and can
++   *    return an empty array on failure, causing LanceDB cleanup to be skipped.
++   * 2. Throws an explicit Error on SQL failure so callers can detect and
++   *    handle the condition rather than silently skipping deletion.
++   * 3. Wraps the LanceDB table.delete() call in a try/catch and throws an
++   *    explicit Error, making LanceDB failures visible to callers.
++   * 4. Returns false (instead of undefined) when no vectors are found or the
++   *    namespace does not exist, distinguishing "nothing to do" from "true"
++   *    (successful deletion).
++   *
++   * Residual limit: Prisma and LanceDB do not share a transaction.
++   * A SQL success followed by a LanceDB failure (or vice versa) leaves a
++   * partial state. Callers must log and handle that scenario.
++   */
+   async deleteDocumentFromNamespace(namespace, docId) {
+     const { client } = await this.connect();
+     const exists = await this.namespaceExists(client, namespace);
+@@ -295,17 +314,39 @@
+       this.logger(
+         `deleteDocumentFromNamespace - namespace ${namespace} does not exist.`
+       );
+-      return;
++      return false;
+     }
+ 
+-    const { DocumentVectors } = require("../../../models/vectors");
+-    const table = await client.openTable(namespace);
+-    const vectorIds = (await DocumentVectors.where({ docId })).map(
+-      (record) => record.vectorId
+-    );
++    // Use prisma directly to avoid the silent error absorption in
++    // DocumentVectors.where(), which returns [] on any SQL failure.
++    const prisma = require("../../../utils/prisma");
++    let vectorIds;
++    try {
++      const rows = await prisma.document_vectors.findMany({
++        where: { docId },
++        select: { vectorId: true },
++      });
++      vectorIds = rows.map((r) => r.vectorId);
++    } catch (sqlError) {
++      throw new Error(
++        `[LanceDb.deleteDocumentFromNamespace] SQL error fetching vector IDs` +
++          ` for docId ${docId}: ${sqlError.message}`
++      );
++    }
++
++    if (vectorIds.length === 0) return false;
+ 
+-    if (vectorIds.length === 0) return;
+-    await table.delete(`id IN (${vectorIds.map((v) => `'${v}'`).join(",")})`);
++    const table = await client.openTable(namespace);
++    try {
++      await table.delete(
++        `id IN (${vectorIds.map((v) => `'${v}'`).join(",")})`
++      );
++    } catch (lanceError) {
++      throw new Error(
++        `[LanceDb.deleteDocumentFromNamespace] LanceDB deletion failed` +
++          ` for docId ${docId}: ${lanceError.message}`
++      );
++    }
+     return true;
+   }
+ 
+--- ref-documents.js	2026-10-29 19:33:28.152392927 +0800
++++ candidate-documents.js	2026-10-29 19:40:49.733893606 +0800
+@@ -60,6 +60,22 @@
+     }
+   },
+ 
++  /**
++   * PUR-02 PATCH: _getStrict
++   *
++   * Variant of get() that lets Prisma errors propagate instead of absorbing
++   * them and returning null. Used by removeDocuments() so that a SQL failure
++   * is not silently treated as "document not found".
++   *
++   * Returns null when the document is genuinely absent; throws on SQL error.
++   */
++  _getStrict: async function (clause = {}) {
++    const document = await prisma.workspace_documents.findFirst({
++      where: clause,
++    });
++    return document || null;
++  },
++
+   where: async function (
+     clause = {},
+     limit = null,
+@@ -248,21 +264,65 @@
+     return { failedToEmbed, errors: Array.from(errors), embedded };
+   },
+ 
++  /**
++   * PUR-02 PATCH: removeDocuments
++   *
++   * Changes vs original:
++   * 1. Uses _getStrict() instead of get() so that a SQL read failure throws
++   *    rather than being silently treated as "document not found".
++   * 2. Wraps the LanceDB deletion call in an explicit try/catch. On failure,
++   *    logs the error and skips the SQL cleanup for that document so the SQL
++   *    record is preserved for a possible retry.
++   * 3. Separates the SQL cleanup block so that a failure in either
++   *    workspace_documents.delete or document_vectors.deleteMany is reported
++   *    with a clear message indicating that LanceDB was already cleaned and
++   *    manual remediation of orphaned rows may be required.
++   *
++   * Residual limit: LanceDB and SQL do not share a transaction. A SQL failure
++   * after a successful LanceDB deletion leaves orphaned document_vectors rows.
++   * That state is logged explicitly so an operator can identify and resolve it.
++   */
+   removeDocuments: async function (workspace, removals = [], userId = null) {
+     const VectorDb = getVectorDbClass();
+     if (removals.length === 0) return;
+ 
+     for (const path of removals) {
+-      const document = await this.get({
+-        docpath: path,
+-        workspaceId: workspace.id,
+-      });
++      // Step 1: Fetch the document record, propagating SQL errors.
++      let document;
++      try {
++        document = await this._getStrict({
++          docpath: path,
++          workspaceId: workspace.id,
++        });
++      } catch (sqlError) {
++        console.error(
++          `[removeDocuments] SQL error fetching document at ${path}:`,
++          sqlError.message
++        );
++        throw sqlError;
++      }
+       if (!document) continue;
+-      await VectorDb.deleteDocumentFromNamespace(
+-        workspace.slug,
+-        document.docId
+-      );
+ 
++      // Step 2: Delete from LanceDB (requires document_vectors rows to be present).
++      // If this step fails, abort before touching SQL so the record is preserved
++      // and the operation can be retried.
++      try {
++        await VectorDb.deleteDocumentFromNamespace(
++          workspace.slug,
++          document.docId
++        );
++      } catch (lanceError) {
++        console.error(
++          `[removeDocuments] LanceDB deletion failed for ${path} ` +
++            `(docId ${document.docId}): ${lanceError.message}. ` +
++            `SQL record preserved for retry.`
++        );
++        throw lanceError;
++      }
++
++      // Step 3: Clean up SQL records.
++      // LanceDB and SQL are not atomic: a failure here leaves LanceDB already
++      // clean but SQL records still present. Log clearly for manual remediation.
+       try {
+         await prisma.workspace_documents.delete({
+           where: { id: document.id, workspaceId: workspace.id },
+@@ -270,8 +330,14 @@
+         await prisma.document_vectors.deleteMany({
+           where: { docId: document.docId },
+         });
+-      } catch (error) {
+-        console.error(error.message);
++      } catch (sqlError) {
++        console.error(
++          `[removeDocuments] SQL cleanup failed for ${path} after LanceDB deletion. ` +
++            `document_vectors rows for docId ${document.docId} may be orphaned. ` +
++            `Manual cleanup required.`,
++          sqlError.message
++        );
++        throw sqlError;
+       }
+     }
+ 
+--- ref-purgeDocument.js	2026-10-29 19:33:28.155123883 +0800
++++ candidate-purgeDocument.js	2026-10-29 19:41:23.053893406 +0800
+@@ -10,23 +10,72 @@
+ const { Document } = require("../../models/documents");
+ const { Workspace } = require("../../models/workspace");
+ 
++/**
++ * PUR-02 PATCH: purgeDocument
++ *
++ * Changes vs original:
++ * The original deleted the vector cache and the source document file BEFORE
++ * removing workspace associations (SQL + LanceDB vectors). If the association
++ * cleanup failed, the source data was already gone and the operation could not
++ * be retried.
++ *
++ * New order:
++ * 1. Remove workspace document associations and LanceDB vectors for all
++ *    workspaces (requires source file only for path lookup — the file itself
++ *    does not need to be readable at this stage).
++ * 2. Remove the vector cache file.
++ * 3. Remove the source document file.
++ *
++ * If step 1 throws, steps 2 and 3 are not reached, so the source file is
++ * preserved and the purge can be retried.
++ *
++ * Residual limit: removeDocuments() may throw partway through the workspace
++ * list (e.g. SQL error on workspace N after LanceDB cleaned workspace N-1).
++ * In that case the source file is preserved but some workspaces are partially
++ * cleaned. The caller should log and surface this condition.
++ */
+ async function purgeDocument(filename = null) {
+   if (!filename || !normalizePath(filename)) return;
+ 
+-  await purgeVectorCache(filename);
+-  await purgeSourceDocument(filename);
++  // Step 1: Remove workspace associations and LanceDB vectors first.
++  // Errors propagate to the caller so the source file is not deleted on failure.
+   const workspaces = await Workspace.where();
+   for (const workspace of workspaces) {
+     await Document.removeDocuments(workspace, [filename]);
+   }
++
++  // Step 2: Remove the vector cache (safe to delete now; association cleanup
++  // completed successfully).
++  await purgeVectorCache(filename);
++
++  // Step 3: Remove the source document file.
++  await purgeSourceDocument(filename);
+   return;
+ }
+ 
+ /**
+- * Purge a folder and all its contents. This will also remove all vector-cache files and workspace document associations
+- * for the documents within the folder.
+- * @notice This function is not recursive. It only purges the contents of the specified folder.
+- * @notice You cannot purge the `custom-documents` folder.
++ * PUR-02 PATCH: purgeFolder
++ *
++ * Changes vs original:
++ * 1. Rejects the folder if it contains nested subdirectories or symbolic links.
++ *    The function is documented as non-recursive and must only contain flat
++ *    regular files. Unexpected entries abort the operation with an error log.
++ * 2. Rejects top-level symlinks when building the list of removable folders.
++ * 3. Collects cleanup errors (purgeVectorCache + removeDocuments) instead of
++ *    swallowing them via unhandled Promise rejections. If any cleanup step
++ *    fails, the folder is NOT deleted so the operation can be retried.
++ * 4. Deletes files individually with unlinkSync, then removes the now-empty
++ *    directory with rmdirSync (which refuses to delete a non-empty directory),
++ *    replacing the original fs.rmSync({ recursive: true }) that would
++ *    unconditionally recurse into any content regardless of what was cleaned.
++ *
++ * Residual limits:
++ * - Prisma and LanceDB are not transactional together. A partial failure
++ *   inside removeDocuments() leaves an inconsistent state that is logged but
++ *   cannot be automatically remediated here.
++ * - purgeVectorCache and removeDocuments are called sequentially per file /
++ *   per workspace to avoid obscuring individual failures in a parallel fan-out.
++ *
+  * @param {string} folderName - The name/path of the folder to purge.
+  * @returns {Promise<void>}
+  */
+@@ -34,14 +83,17 @@
+   if (!folderName) return;
+   const subFolder = normalizePath(folderName);
+   const subFolderPath = path.resolve(documentsPath, subFolder);
++
++  // Build the list of removable top-level folders. custom-documents and
++  // symbolic links are excluded.
+   const validRemovableSubFolders = fs
+     .readdirSync(documentsPath)
+     .map((folder) => {
+-      // Filter out any results which are not folders or
+-      // are the protected custom-documents folder.
+       if (folder === "custom-documents") return null;
+       const subfolderPath = path.resolve(documentsPath, folder);
+-      if (!fs.lstatSync(subfolderPath).isDirectory()) return null;
++      const stat = fs.lstatSync(subfolderPath);
++      // Reject symbolic links at the top level as well as non-directories.
++      if (stat.isSymbolicLink() || !stat.isDirectory()) return null;
+       return folder;
+     })
+     .filter((subFolder) => !!subFolder);
+@@ -53,34 +105,65 @@
+   )
+     return;
+ 
+-  const filenames = fs
+-    .readdirSync(subFolderPath)
+-    .map((file) =>
+-      path.join(subFolderPath, file).replace(documentsPath + "/", "")
++  // Reject folders that contain nested subdirectories or symbolic links.
++  // purgeFolder is documented as non-recursive and is only safe to use with
++  // flat collections of regular files.
++  const entries = fs.readdirSync(subFolderPath, { withFileTypes: true });
++  const unexpected = entries.filter(
++    (e) => !e.isFile() || e.isSymbolicLink()
++  );
++  if (unexpected.length > 0) {
++    console.error(
++      `[purgeFolder] ${subFolder} contains unexpected entries ` +
++        `(subdirectories or symlinks): ` +
++        `${unexpected.map((e) => e.name).join(", ")}. Aborting.`
+     );
++    return;
++  }
++
++  const filenames = entries.map((e) =>
++    path.join(subFolderPath, e.name).replace(documentsPath + "/", "")
++  );
+   const workspaces = await Workspace.where();
+ 
+-  const purgePromises = [];
+-  // Remove associated Vector-cache files
++  // Collect cleanup errors; if any step fails, abort folder deletion so the
++  // operation can be retried without losing source data.
++  const cleanupErrors = [];
++
+   for (const filename of filenames) {
+-    const rmVectorCache = () =>
+-      new Promise((resolve) =>
+-        purgeVectorCache(filename).then(() => resolve(true))
+-      );
+-    purgePromises.push(rmVectorCache);
++    try {
++      await purgeVectorCache(filename);
++    } catch (err) {
++      cleanupErrors.push(`purgeVectorCache(${filename}): ${err.message}`);
++    }
+   }
+ 
+-  // Remove workspace document associations
+   for (const workspace of workspaces) {
+-    const rmWorkspaceDoc = () =>
+-      new Promise((resolve) =>
+-        Document.removeDocuments(workspace, filenames).then(() => resolve(true))
++    try {
++      await Document.removeDocuments(workspace, filenames);
++    } catch (err) {
++      cleanupErrors.push(
++        `removeDocuments(${workspace.slug}): ${err.message}`
+       );
+-    purgePromises.push(rmWorkspaceDoc);
++    }
+   }
+ 
+-  await Promise.all(purgePromises.flat().map((f) => f()));
+-  fs.rmSync(subFolderPath, { recursive: true }); // Delete target document-folder and source files.
++  if (cleanupErrors.length > 0) {
++    console.error(
++      `[purgeFolder] Cleanup errors in ${subFolder} — folder NOT deleted:`,
++      cleanupErrors
++    );
++    return;
++  }
++
++  // All cleanup steps succeeded. Delete files individually to avoid any
++  // implicit recursion into unexpected content, then remove the empty folder.
++  for (const entry of entries) {
++    fs.unlinkSync(path.join(subFolderPath, entry.name));
++  }
++  // rmdirSync (without recursive) only succeeds on an empty directory,
++  // providing a final safety check against unexpected residual content.
++  fs.rmdirSync(subFolderPath);
+ 
+   return;
+ }
