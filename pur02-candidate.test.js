@@ -7,7 +7,7 @@
  * - No active LanceDB namespace is touched: lancedb is mocked via jest.mock().
  * - No real Workspace or Document model is loaded: all dependencies mocked.
  *
- * 8 scenarios:
+ * 12 scenarios:
  *   1. removeDocuments — absent document (not found → silently skip, no error)
  *   2. removeDocuments — SQL read error (_getStrict propagates, does NOT return null)
  *   3. removeDocuments — LanceDB error (aborts before SQL, record preserved)
@@ -17,6 +17,11 @@
  *   6. purgeFolder — folder containing a nested subdirectory is rejected
  *   7. purgeFolder — folder containing a symbolic link entry is rejected
  *   8. purgeDocument — cleanup (removeDocuments) failure prevents source deletion
+ *   --- Scenarios 9-12: deleteDocumentFromNamespace() direct tests ---
+ *   9.  Namespace absent → returns false, no LanceDB or SQL call
+ *  10.  No vectors found (SQL returns []) → returns false, no table.delete call
+ *  11.  SQL read error → throws with clear message, no table.delete call
+ *  12.  LanceDB table.delete() error → throws with clear message
  */
 
 "use strict";
@@ -40,6 +45,13 @@ let mockPrismaDocumentVectorsFindMany = jest.fn();
 let mockPrismaWorkspaceDocumentsDelete = jest.fn();
 let mockPrismaDocumentVectorsDeleteMany = jest.fn();
 let mockPrismaWorkspaceDocumentsFindFirst = jest.fn();
+let mockPrismaWorkspacesFindMany = jest.fn();
+// PUR-02 v2: removeDocuments() wraps both SQL deletions in prisma.$transaction([...]).
+// The individual mock fns (delete / deleteMany) are still called to build the array,
+// but the actual execution is performed by $transaction.  We need a separate mock so
+// that Scenario 4 can make the transaction fail without creating unhandled rejections
+// from the individual operation mocks.
+let mockPrismaTransaction = jest.fn();
 
 const mockPrisma = {
   document_vectors: {
@@ -50,6 +62,11 @@ const mockPrisma = {
     findFirst: (...args) => mockPrismaWorkspaceDocumentsFindFirst(...args),
     delete: (...args) => mockPrismaWorkspaceDocumentsDelete(...args),
   },
+  workspaces: {
+    findMany: (...args) => mockPrismaWorkspacesFindMany(...args),
+  },
+  // Batch transaction — executes the array of PrismaPromises atomically.
+  $transaction: (...args) => mockPrismaTransaction(...args),
 };
 
 // ---------------------------------------------------------------------------
@@ -138,6 +155,7 @@ const SCRATCHPAD = path.dirname(__filename);
 
 const CANDIDATE_DOCUMENTS = path.join(SCRATCHPAD, "candidate-documents.js");
 const CANDIDATE_PURGE = path.join(SCRATCHPAD, "candidate-purgeDocument.js");
+const CANDIDATE_LANCE = path.join(SCRATCHPAD, "candidate-lance-index.js");
 
 // ---------------------------------------------------------------------------
 // Shared setup
@@ -279,7 +297,12 @@ describe("Scenario 4 — removeDocuments: SQL cleanup error propagates with orph
     const docRow = makeDocumentRow();
     mockPrismaWorkspaceDocumentsFindFirst.mockResolvedValue(docRow);
     mockDeleteDocumentFromNamespace.mockResolvedValue(true); // LanceDB OK
-    mockPrismaWorkspaceDocumentsDelete.mockRejectedValue(
+    // The candidate wraps both SQL ops in prisma.$transaction([...]).
+    // The individual delete / deleteMany mocks are called to build the array
+    // (return undefined by default after clearAllMocks) but it is $transaction
+    // that executes them.  Mock $transaction to reject so that no unhandled
+    // rejections are created by the individual operation mocks.
+    mockPrismaTransaction.mockRejectedValue(
       new Error("SQLITE_BUSY: database is locked")
     );
 
@@ -304,6 +327,9 @@ describe("Scenario 4 — removeDocuments: SQL cleanup error propagates with orph
 
     // LanceDB was called and succeeded.
     expect(mockDeleteDocumentFromNamespace).toHaveBeenCalledTimes(1);
+
+    // $transaction was attempted (and failed).
+    expect(mockPrismaTransaction).toHaveBeenCalledTimes(1);
 
     // The error log should mention "orphaned" to guide manual remediation.
     const errorCalls = consoleSpy.mock.calls.flat().join(" ");
@@ -344,9 +370,8 @@ describe("Scenario 5 — purgeFolder: custom-documents folder rejected", () => {
       "../../models/documents": {
         Document: { removeDocuments: jest.fn().mockResolvedValue(undefined) },
       },
-      "../../models/workspace": {
-        Workspace: { where: jest.fn().mockResolvedValue([makeWorkspace()]) },
-      },
+      // PUR-02 v2: candidate-purgeDocument.js imports prisma directly.
+      "../../utils/prisma": mockPrisma,
       fs: fsMock,
     };
 
@@ -412,9 +437,8 @@ describe("Scenario 6 — purgeFolder: nested subdirectory aborts operation", () 
       "../../models/documents": {
         Document: { removeDocuments: jest.fn().mockResolvedValue(undefined) },
       },
-      "../../models/workspace": {
-        Workspace: { where: jest.fn().mockResolvedValue([makeWorkspace()]) },
-      },
+      // PUR-02 v2: candidate-purgeDocument.js imports prisma directly.
+      "../../utils/prisma": mockPrisma,
       fs: fsMock,
     };
 
@@ -484,9 +508,8 @@ describe("Scenario 7 — purgeFolder: symbolic link entry aborts operation", () 
       "../../models/documents": {
         Document: { removeDocuments: jest.fn().mockResolvedValue(undefined) },
       },
-      "../../models/workspace": {
-        Workspace: { where: jest.fn().mockResolvedValue([makeWorkspace()]) },
-      },
+      // PUR-02 v2: candidate-purgeDocument.js imports prisma directly.
+      "../../utils/prisma": mockPrisma,
       fs: fsMock,
     };
 
@@ -515,7 +538,10 @@ describe("Scenario 8 — purgeDocument: cleanup failure preserves source file", 
     const removeDocumentsMock = jest
       .fn()
       .mockRejectedValue(new Error("LanceDB connection refused"));
-    const workspacesWhereMock = jest.fn().mockResolvedValue([makeWorkspace()]);
+
+    // PUR-02 v2: purgeDocument() uses _getWorkspacesStrict() which calls
+    // prisma.workspaces.findMany() directly.  Set it up via the shared mock.
+    mockPrismaWorkspacesFindMany.mockResolvedValue([makeWorkspace()]);
 
     const stubs = {
       ".": {
@@ -528,9 +554,8 @@ describe("Scenario 8 — purgeDocument: cleanup failure preserves source file", 
       "../../models/documents": {
         Document: { removeDocuments: removeDocumentsMock },
       },
-      "../../models/workspace": {
-        Workspace: { where: workspacesWhereMock },
-      },
+      // PUR-02 v2: candidate-purgeDocument.js imports prisma directly.
+      "../../utils/prisma": mockPrisma,
       fs: {
         readdirSync: jest.fn().mockReturnValue([]),
         lstatSync: jest.fn(),
@@ -549,5 +574,189 @@ describe("Scenario 8 — purgeDocument: cleanup failure preserves source file", 
     // The association cleanup failed → source files must NOT be deleted.
     expect(purgeVectorCacheMock).not.toHaveBeenCalled();
     expect(purgeSourceDocumentMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helper: build a minimal LanceDB client stub
+// ---------------------------------------------------------------------------
+function makeLanceClientStub({ namespaces = [], tableDeleteFn = jest.fn().mockResolvedValue(undefined) } = {}) {
+  return {
+    tableNames: jest.fn().mockResolvedValue(namespaces),
+    openTable: jest.fn().mockResolvedValue({ delete: tableDeleteFn }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 9 — deleteDocumentFromNamespace: namespace absent → false, no calls
+// ---------------------------------------------------------------------------
+describe("Scenario 9 — deleteDocumentFromNamespace: namespace absent returns false", () => {
+  test("Returns false without querying SQL or calling table.delete when namespace does not exist", async () => {
+    const tableDeleteFn = jest.fn();
+    const mockPrismaLocal = {
+      document_vectors: { findMany: jest.fn() },
+    };
+
+    // Namespace list is empty → namespaceExists returns false.
+    const lanceClientStub = makeLanceClientStub({ namespaces: [], tableDeleteFn });
+
+    const stubs = {
+      "@lancedb/lancedb": { connect: jest.fn().mockResolvedValue(lanceClientStub) },
+      "../../helpers": { toChunks: jest.fn(), getEmbeddingEngineSelection: jest.fn() },
+      "../../TextSplitter": { TextSplitter: jest.fn() },
+      "../../../models/systemSettings": { SystemSettings: { getValueOrFallback: jest.fn() } },
+      "../../files": { storeVectorResult: jest.fn(), cachedVectorInformation: jest.fn() },
+      uuid: { v4: () => "uuid-stub" },
+      "../../chats": { sourceIdentifier: jest.fn() },
+      "../../EmbeddingRerankers/native": { NativeEmbeddingReranker: jest.fn() },
+      "../base": { VectorDatabase: class { logger(...args) { /* silent */ } curateSources(s) { return s; } } },
+      path: require("path"),
+      "../../../utils/prisma": mockPrismaLocal,
+      "../../../models/vectors": { DocumentVectors: {} },
+    };
+
+    const { LanceDb } = loadCandidateModule(CANDIDATE_LANCE, stubs);
+    const instance = new LanceDb();
+
+    const result = await instance.deleteDocumentFromNamespace("absent-namespace", "doc-uuid-001");
+
+    expect(result).toBe(false);
+    expect(mockPrismaLocal.document_vectors.findMany).not.toHaveBeenCalled();
+    expect(tableDeleteFn).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 10 — deleteDocumentFromNamespace: no vectors found → false, no table.delete
+// ---------------------------------------------------------------------------
+describe("Scenario 10 — deleteDocumentFromNamespace: no vectors found returns false", () => {
+  test("Returns false without calling table.delete when SQL returns empty vector list", async () => {
+    const tableDeleteFn = jest.fn();
+    const mockPrismaLocal = {
+      document_vectors: {
+        findMany: jest.fn().mockResolvedValue([]), // no vectors
+      },
+    };
+
+    const lanceClientStub = makeLanceClientStub({
+      namespaces: ["test-workspace"],
+      tableDeleteFn,
+    });
+
+    const stubs = {
+      "@lancedb/lancedb": { connect: jest.fn().mockResolvedValue(lanceClientStub) },
+      "../../helpers": { toChunks: jest.fn(), getEmbeddingEngineSelection: jest.fn() },
+      "../../TextSplitter": { TextSplitter: jest.fn() },
+      "../../../models/systemSettings": { SystemSettings: { getValueOrFallback: jest.fn() } },
+      "../../files": { storeVectorResult: jest.fn(), cachedVectorInformation: jest.fn() },
+      uuid: { v4: () => "uuid-stub" },
+      "../../chats": { sourceIdentifier: jest.fn() },
+      "../../EmbeddingRerankers/native": { NativeEmbeddingReranker: jest.fn() },
+      "../base": { VectorDatabase: class { logger(...args) {} curateSources(s) { return s; } } },
+      path: require("path"),
+      "../../../utils/prisma": mockPrismaLocal,
+      "../../../models/vectors": { DocumentVectors: {} },
+    };
+
+    const { LanceDb } = loadCandidateModule(CANDIDATE_LANCE, stubs);
+    const instance = new LanceDb();
+
+    const result = await instance.deleteDocumentFromNamespace("test-workspace", "doc-uuid-no-vectors");
+
+    expect(result).toBe(false);
+    expect(tableDeleteFn).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 11 — deleteDocumentFromNamespace: SQL read error throws
+// ---------------------------------------------------------------------------
+describe("Scenario 11 — deleteDocumentFromNamespace: SQL read error propagates", () => {
+  test("Throws with a clear message when prisma.document_vectors.findMany rejects", async () => {
+    const tableDeleteFn = jest.fn();
+    const mockPrismaLocal = {
+      document_vectors: {
+        findMany: jest.fn().mockRejectedValue(new Error("SQLITE_CORRUPT: database disk image is malformed")),
+      },
+    };
+
+    const lanceClientStub = makeLanceClientStub({
+      namespaces: ["test-workspace"],
+      tableDeleteFn,
+    });
+
+    const stubs = {
+      "@lancedb/lancedb": { connect: jest.fn().mockResolvedValue(lanceClientStub) },
+      "../../helpers": { toChunks: jest.fn(), getEmbeddingEngineSelection: jest.fn() },
+      "../../TextSplitter": { TextSplitter: jest.fn() },
+      "../../../models/systemSettings": { SystemSettings: { getValueOrFallback: jest.fn() } },
+      "../../files": { storeVectorResult: jest.fn(), cachedVectorInformation: jest.fn() },
+      uuid: { v4: () => "uuid-stub" },
+      "../../chats": { sourceIdentifier: jest.fn() },
+      "../../EmbeddingRerankers/native": { NativeEmbeddingReranker: jest.fn() },
+      "../base": { VectorDatabase: class { logger(...args) {} curateSources(s) { return s; } } },
+      path: require("path"),
+      "../../../utils/prisma": mockPrismaLocal,
+      "../../../models/vectors": { DocumentVectors: {} },
+    };
+
+    const { LanceDb } = loadCandidateModule(CANDIDATE_LANCE, stubs);
+    const instance = new LanceDb();
+
+    await expect(
+      instance.deleteDocumentFromNamespace("test-workspace", "doc-uuid-001")
+    ).rejects.toThrow(/SQL error fetching vector IDs/);
+
+    // table.delete must NOT be reached after a SQL failure.
+    expect(tableDeleteFn).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 12 — deleteDocumentFromNamespace: LanceDB table.delete() error throws
+// ---------------------------------------------------------------------------
+describe("Scenario 12 — deleteDocumentFromNamespace: LanceDB table.delete error propagates", () => {
+  test("Throws with a clear message when table.delete rejects", async () => {
+    const tableDeleteFn = jest.fn().mockRejectedValue(new Error("LanceDB I/O error: shard write failed"));
+    const mockPrismaLocal = {
+      document_vectors: {
+        findMany: jest.fn().mockResolvedValue([
+          { vectorId: "vec-aaa" },
+          { vectorId: "vec-bbb" },
+        ]),
+      },
+    };
+
+    const lanceClientStub = makeLanceClientStub({
+      namespaces: ["test-workspace"],
+      tableDeleteFn,
+    });
+
+    const stubs = {
+      "@lancedb/lancedb": { connect: jest.fn().mockResolvedValue(lanceClientStub) },
+      "../../helpers": { toChunks: jest.fn(), getEmbeddingEngineSelection: jest.fn() },
+      "../../TextSplitter": { TextSplitter: jest.fn() },
+      "../../../models/systemSettings": { SystemSettings: { getValueOrFallback: jest.fn() } },
+      "../../files": { storeVectorResult: jest.fn(), cachedVectorInformation: jest.fn() },
+      uuid: { v4: () => "uuid-stub" },
+      "../../chats": { sourceIdentifier: jest.fn() },
+      "../../EmbeddingRerankers/native": { NativeEmbeddingReranker: jest.fn() },
+      "../base": { VectorDatabase: class { logger(...args) {} curateSources(s) { return s; } } },
+      path: require("path"),
+      "../../../utils/prisma": mockPrismaLocal,
+      "../../../models/vectors": { DocumentVectors: {} },
+    };
+
+    const { LanceDb } = loadCandidateModule(CANDIDATE_LANCE, stubs);
+    const instance = new LanceDb();
+
+    await expect(
+      instance.deleteDocumentFromNamespace("test-workspace", "doc-uuid-001")
+    ).rejects.toThrow(/LanceDB deletion failed/);
+
+    // SQL was called and succeeded (vector IDs were fetched).
+    expect(mockPrismaLocal.document_vectors.findMany).toHaveBeenCalledTimes(1);
+    // table.delete was called (and threw).
+    expect(tableDeleteFn).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,5 +1,5 @@
---- ref-lance-index.js	2026-10-29 19:33:28.157557677 +0800
-+++ candidate-lance-index.js	2026-10-29 19:39:36.909894044 +0800
+--- /tmp/claude-0/-home-claude/72322144-4fa5-5d55-97b3-c67f686ac6ec/scratchpad/ref-lance-index.js	2026-10-29 19:33:28.157557677 +0800
++++ /tmp/claude-0/-home-claude/72322144-4fa5-5d55-97b3-c67f686ac6ec/scratchpad/candidate-lance-index.js	2026-10-29 19:39:36.909894044 +0800
 @@ -288,6 +288,25 @@
      return true;
    }
@@ -74,8 +74,8 @@
      return true;
    }
  
---- ref-documents.js	2026-10-29 19:33:28.152392927 +0800
-+++ candidate-documents.js	2026-10-29 19:40:49.733893606 +0800
+--- /tmp/claude-0/-home-claude/72322144-4fa5-5d55-97b3-c67f686ac6ec/scratchpad/ref-documents.js	2026-10-29 19:33:28.152392927 +0800
++++ /tmp/claude-0/-home-claude/72322144-4fa5-5d55-97b3-c67f686ac6ec/scratchpad/candidate-documents.js	2026-10-30 07:01:57.095349974 +0800
 @@ -60,6 +60,22 @@
      }
    },
@@ -99,7 +99,7 @@
    where: async function (
      clause = {},
      limit = null,
-@@ -248,21 +264,65 @@
+@@ -248,30 +264,88 @@
      return { failedToEmbed, errors: Array.from(errors), embedded };
    },
  
@@ -153,7 +153,15 @@
 +      // Step 2: Delete from LanceDB (requires document_vectors rows to be present).
 +      // If this step fails, abort before touching SQL so the record is preserved
 +      // and the operation can be retried.
-+      try {
+       try {
+-        await prisma.workspace_documents.delete({
+-          where: { id: document.id, workspaceId: workspace.id },
+-        });
+-        await prisma.document_vectors.deleteMany({
+-          where: { docId: document.docId },
+-        });
+-      } catch (error) {
+-        console.error(error.message);
 +        await VectorDb.deleteDocumentFromNamespace(
 +          workspace.slug,
 +          document.docId
@@ -167,18 +175,24 @@
 +        throw lanceError;
 +      }
 +
-+      // Step 3: Clean up SQL records.
-+      // LanceDB and SQL are not atomic: a failure here leaves LanceDB already
-+      // clean but SQL records still present. Log clearly for manual remediation.
-       try {
-         await prisma.workspace_documents.delete({
-           where: { id: document.id, workspaceId: workspace.id },
-@@ -270,8 +330,14 @@
-         await prisma.document_vectors.deleteMany({
-           where: { docId: document.docId },
-         });
--      } catch (error) {
--        console.error(error.message);
++      // Step 3: Clean up SQL records atomically.
++      // Both deletions are wrapped in a single Prisma transaction so that a
++      // failure in either leaves BOTH rows intact. Without the transaction, a
++      // failure in deleteMany after a successful delete would make the document
++      // invisible to _getStrict() on retry while its document_vectors rows
++      // silently persisted.
++      // Note: LanceDB and SQL still do not share a transaction (L-1 residual
++      // limit). A failure here means LanceDB is already clean but SQL is not;
++      // the state is logged for manual remediation.
++      try {
++        await prisma.$transaction([
++          prisma.workspace_documents.delete({
++            where: { id: document.id, workspaceId: workspace.id },
++          }),
++          prisma.document_vectors.deleteMany({
++            where: { docId: document.docId },
++          }),
++        ]);
 +      } catch (sqlError) {
 +        console.error(
 +          `[removeDocuments] SQL cleanup failed for ${path} after LanceDB deletion. ` +
@@ -190,12 +204,25 @@
        }
      }
  
---- ref-purgeDocument.js	2026-10-29 19:33:28.155123883 +0800
-+++ candidate-purgeDocument.js	2026-10-29 19:41:23.053893406 +0800
-@@ -10,23 +10,72 @@
+--- /tmp/claude-0/-home-claude/72322144-4fa5-5d55-97b3-c67f686ac6ec/scratchpad/ref-purgeDocument.js	2026-10-29 19:33:28.155123883 +0800
++++ /tmp/claude-0/-home-claude/72322144-4fa5-5d55-97b3-c67f686ac6ec/scratchpad/candidate-purgeDocument.js	2026-10-30 07:01:45.951350041 +0800
+@@ -8,25 +8,92 @@
+   documentsPath,
+ } = require(".");
  const { Document } = require("../../models/documents");
- const { Workspace } = require("../../models/workspace");
+-const { Workspace } = require("../../models/workspace");
++const prisma = require("../../utils/prisma");
  
++/**
++ * PUR-02 helper: fetch all workspaces with strict error propagation.
++ * Workspace.where() absorbs Prisma errors and returns [] — indistinguishable
++ * from "no workspaces". A SQL failure here must abort the purge so the source
++ * file is not deleted without having verified workspace associations.
++ */
++async function _getWorkspacesStrict() {
++  return await prisma.workspaces.findMany();
++}
++
 +/**
 + * PUR-02 PATCH: purgeDocument
 + *
@@ -225,9 +252,18 @@
  
 -  await purgeVectorCache(filename);
 -  await purgeSourceDocument(filename);
+-  const workspaces = await Workspace.where();
 +  // Step 1: Remove workspace associations and LanceDB vectors first.
-+  // Errors propagate to the caller so the source file is not deleted on failure.
-   const workspaces = await Workspace.where();
++  // Use _getWorkspacesStrict() so a SQL failure throws rather than being
++  // silently treated as "no workspaces" (Workspace.where() absorbs errors).
++  let workspaces;
++  try {
++    workspaces = await _getWorkspacesStrict();
++  } catch (sqlError) {
++    throw new Error(
++      `[purgeDocument] SQL error fetching workspaces: ${sqlError.message}`
++    );
++  }
    for (const workspace of workspaces) {
      await Document.removeDocuments(workspace, [filename]);
    }
@@ -271,7 +307,7 @@
   * @param {string} folderName - The name/path of the folder to purge.
   * @returns {Promise<void>}
   */
-@@ -34,14 +83,17 @@
+@@ -34,14 +101,17 @@
    if (!folderName) return;
    const subFolder = normalizePath(folderName);
    const subFolderPath = path.resolve(documentsPath, subFolder);
@@ -292,7 +328,7 @@
        return folder;
      })
      .filter((subFolder) => !!subFolder);
-@@ -53,34 +105,65 @@
+@@ -53,34 +123,80 @@
    )
      return;
  
@@ -313,34 +349,43 @@
 +        `(subdirectories or symlinks): ` +
 +        `${unexpected.map((e) => e.name).join(", ")}. Aborting.`
      );
+-  const workspaces = await Workspace.where();
 +    return;
 +  }
-+
-+  const filenames = entries.map((e) =>
-+    path.join(subFolderPath, e.name).replace(documentsPath + "/", "")
-+  );
-   const workspaces = await Workspace.where();
  
 -  const purgePromises = [];
 -  // Remove associated Vector-cache files
-+  // Collect cleanup errors; if any step fails, abort folder deletion so the
-+  // operation can be retried without losing source data.
-+  const cleanupErrors = [];
-+
-   for (const filename of filenames) {
+-  for (const filename of filenames) {
 -    const rmVectorCache = () =>
 -      new Promise((resolve) =>
 -        purgeVectorCache(filename).then(() => resolve(true))
 -      );
 -    purgePromises.push(rmVectorCache);
-+    try {
-+      await purgeVectorCache(filename);
-+    } catch (err) {
-+      cleanupErrors.push(`purgeVectorCache(${filename}): ${err.message}`);
-+    }
++  const filenames = entries.map((e) =>
++    path.join(subFolderPath, e.name).replace(documentsPath + "/", "")
++  );
++
++  // Use _getWorkspacesStrict() so a SQL failure throws rather than being
++  // silently treated as "no workspaces" (Workspace.where() absorbs errors).
++  let workspaces;
++  try {
++    workspaces = await _getWorkspacesStrict();
++  } catch (sqlError) {
++    console.error(
++      `[purgeFolder] SQL error fetching workspaces — folder NOT deleted:`,
++      sqlError.message
++    );
++    return;
    }
  
 -  // Remove workspace document associations
++  // Collect cleanup errors; if any step fails, abort folder deletion so the
++  // operation can be retried without losing source data.
++  const cleanupErrors = [];
++
++  // Remove workspace document associations and LanceDB vectors FIRST.
++  // Vector caches are deleted afterwards so that a cache is only lost once
++  // the SQL and LanceDB state it describes has been cleaned.
    for (const workspace of workspaces) {
 -    const rmWorkspaceDoc = () =>
 -      new Promise((resolve) =>
@@ -352,6 +397,14 @@
 +        `removeDocuments(${workspace.slug}): ${err.message}`
        );
 -    purgePromises.push(rmWorkspaceDoc);
++    }
++  }
++
++  for (const filename of filenames) {
++    try {
++      await purgeVectorCache(filename);
++    } catch (err) {
++      cleanupErrors.push(`purgeVectorCache(${filename}): ${err.message}`);
 +    }
    }
  

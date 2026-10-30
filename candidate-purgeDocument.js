@@ -8,7 +8,17 @@ const {
   documentsPath,
 } = require(".");
 const { Document } = require("../../models/documents");
-const { Workspace } = require("../../models/workspace");
+const prisma = require("../../utils/prisma");
+
+/**
+ * PUR-02 helper: fetch all workspaces with strict error propagation.
+ * Workspace.where() absorbs Prisma errors and returns [] — indistinguishable
+ * from "no workspaces". A SQL failure here must abort the purge so the source
+ * file is not deleted without having verified workspace associations.
+ */
+async function _getWorkspacesStrict() {
+  return await prisma.workspaces.findMany();
+}
 
 /**
  * PUR-02 PATCH: purgeDocument
@@ -38,8 +48,16 @@ async function purgeDocument(filename = null) {
   if (!filename || !normalizePath(filename)) return;
 
   // Step 1: Remove workspace associations and LanceDB vectors first.
-  // Errors propagate to the caller so the source file is not deleted on failure.
-  const workspaces = await Workspace.where();
+  // Use _getWorkspacesStrict() so a SQL failure throws rather than being
+  // silently treated as "no workspaces" (Workspace.where() absorbs errors).
+  let workspaces;
+  try {
+    workspaces = await _getWorkspacesStrict();
+  } catch (sqlError) {
+    throw new Error(
+      `[purgeDocument] SQL error fetching workspaces: ${sqlError.message}`
+    );
+  }
   for (const workspace of workspaces) {
     await Document.removeDocuments(workspace, [filename]);
   }
@@ -124,20 +142,27 @@ async function purgeFolder(folderName = null) {
   const filenames = entries.map((e) =>
     path.join(subFolderPath, e.name).replace(documentsPath + "/", "")
   );
-  const workspaces = await Workspace.where();
+
+  // Use _getWorkspacesStrict() so a SQL failure throws rather than being
+  // silently treated as "no workspaces" (Workspace.where() absorbs errors).
+  let workspaces;
+  try {
+    workspaces = await _getWorkspacesStrict();
+  } catch (sqlError) {
+    console.error(
+      `[purgeFolder] SQL error fetching workspaces — folder NOT deleted:`,
+      sqlError.message
+    );
+    return;
+  }
 
   // Collect cleanup errors; if any step fails, abort folder deletion so the
   // operation can be retried without losing source data.
   const cleanupErrors = [];
 
-  for (const filename of filenames) {
-    try {
-      await purgeVectorCache(filename);
-    } catch (err) {
-      cleanupErrors.push(`purgeVectorCache(${filename}): ${err.message}`);
-    }
-  }
-
+  // Remove workspace document associations and LanceDB vectors FIRST.
+  // Vector caches are deleted afterwards so that a cache is only lost once
+  // the SQL and LanceDB state it describes has been cleaned.
   for (const workspace of workspaces) {
     try {
       await Document.removeDocuments(workspace, filenames);
@@ -145,6 +170,14 @@ async function purgeFolder(folderName = null) {
       cleanupErrors.push(
         `removeDocuments(${workspace.slug}): ${err.message}`
       );
+    }
+  }
+
+  for (const filename of filenames) {
+    try {
+      await purgeVectorCache(filename);
+    } catch (err) {
+      cleanupErrors.push(`purgeVectorCache(${filename}): ${err.message}`);
     }
   }
 

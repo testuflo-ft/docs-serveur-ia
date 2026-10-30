@@ -320,16 +320,24 @@ const Document = {
         throw lanceError;
       }
 
-      // Step 3: Clean up SQL records.
-      // LanceDB and SQL are not atomic: a failure here leaves LanceDB already
-      // clean but SQL records still present. Log clearly for manual remediation.
+      // Step 3: Clean up SQL records atomically.
+      // Both deletions are wrapped in a single Prisma transaction so that a
+      // failure in either leaves BOTH rows intact. Without the transaction, a
+      // failure in deleteMany after a successful delete would make the document
+      // invisible to _getStrict() on retry while its document_vectors rows
+      // silently persisted.
+      // Note: LanceDB and SQL still do not share a transaction (L-1 residual
+      // limit). A failure here means LanceDB is already clean but SQL is not;
+      // the state is logged for manual remediation.
       try {
-        await prisma.workspace_documents.delete({
-          where: { id: document.id, workspaceId: workspace.id },
-        });
-        await prisma.document_vectors.deleteMany({
-          where: { docId: document.docId },
-        });
+        await prisma.$transaction([
+          prisma.workspace_documents.delete({
+            where: { id: document.id, workspaceId: workspace.id },
+          }),
+          prisma.document_vectors.deleteMany({
+            where: { docId: document.docId },
+          }),
+        ]);
       } catch (sqlError) {
         console.error(
           `[removeDocuments] SQL cleanup failed for ${path} after LanceDB deletion. ` +
