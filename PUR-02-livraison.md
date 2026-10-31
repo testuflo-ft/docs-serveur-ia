@@ -1,8 +1,8 @@
-# PUR-02 — Livraison candidat correctif (v2)
-**Date** : 2026-10-30  
+# PUR-02 — Livraison candidat correctif (v3)
+**Date** : 2026-10-31  
 **Version AnythingLLM cible** : v1.19.0  
-**Statut** : CANDIDAT v2 — non déployé, à valider avant intégration en production  
-**Révision** : Corrections post-revue ChatGPT appliquées et re-testées (12 / 12 PASS)
+**Statut** : CANDIDAT v3 — non déployé, à valider avant intégration en production  
+**Révision** : Seconde revue ChatGPT appliquée et re-testée (15 / 15 PASS)
 
 ---
 
@@ -17,13 +17,13 @@
 
 ---
 
-## 2. Empreintes SHA-256 (v2 — après corrections post-revue)
+## 2. Empreintes SHA-256 (v3 — après seconde revue ChatGPT)
 
 ```
 c826f004f1761c20b1e06300fc0f8d63416e03abe523b7e06a0259ec23180e44  candidate-lance-index.js
 de9c586043cbf63f70c4070cc18bc2f0871bc3a8b1d8caa79f32248fba8152eb  candidate-documents.js
-c1d8570c9d82f71606399ff139c2fc7b525c7934b58d8fd292594d4231097f7b  candidate-purgeDocument.js
-61f1d83c374ee72a62a7b5441bce46bfa9b61e29b409589d7594b821dbfe6bdc  pur02-candidate.test.js
+a4779221bcf9c6f02ce4d418e5fdddf6cbfb1a09a7d5f8e82c9953ad9046d8c3  candidate-purgeDocument.js
+ec8ab57bfc3e4222de412651fcd5551eb74b21d55041af050d9c74ebb7c26959  pur02-candidate.test.js
 ```
 
 Références v1.19.0 (copies de laboratoire PUR-02-lab-20261029-191346, SHA vérifiés identiques à l'officiel) :
@@ -41,24 +41,27 @@ f6dda7152e476a6078533a8c06f458204d36c2abd550b08bbf69c8ccf232727a  ref-purgeDocum
 |---|---|
 | `node --check` sur les 3 candidats | ✓ Aucune erreur de syntaxe |
 | `node --check` sur le fichier de tests | ✓ |
-| Jest 29 — 12 scénarios (v2) | **12 / 12 PASS** |
+| Jest 29 — 15 scénarios (v3) | **15 / 15 PASS** |
 
-Sortie Jest complète (v2) :
+Sortie Jest complète (v3) :
 ```
 PASS server/__tests__/pur02-candidate.test.js
-  ✓ Scenario 1 — absent document silently skipped (7 ms)
-  ✓ Scenario 2 — SQL read error propagates (87 ms)
-  ✓ Scenario 3 — LanceDB error aborts; SQL record preserved (5 ms)
+  ✓ Scenario 1 — absent document silently skipped (4 ms)
+  ✓ Scenario 2 — SQL read error propagates (50 ms)
+  ✓ Scenario 3 — LanceDB error aborts; SQL record preserved (4 ms)
   ✓ Scenario 4 — SQL cleanup error propagates with orphan warning (3 ms)
-  ✓ Scenario 5 — custom-documents folder rejected (3 ms)
-  ✓ Scenario 6 — nested subdirectory aborts operation (3 ms)
+  ✓ Scenario 5 — custom-documents folder rejected (2 ms)
+  ✓ Scenario 6 — nested subdirectory aborts operation (2 ms)
   ✓ Scenario 7 — symbolic link entry aborts operation (1 ms)
-  ✓ Scenario 8 — cleanup failure preserves source file (2 ms)
-  ✓ Scenario 9 — namespace absent → false, no LanceDB or SQL call (4 ms)
-  ✓ Scenario 10 — no vectors found → false, no table.delete (4 ms)
-  ✓ Scenario 11 — SQL read error → throws with clear message (2 ms)
+  ✓ Scenario 8 — cleanup failure preserves source file (1 ms)
+  ✓ Scenario 9 — namespace absent → false, no LanceDB or SQL call (1 ms)
+  ✓ Scenario 10 — no vectors found → false, no table.delete (3 ms)
+  ✓ Scenario 11 — SQL read error → throws with clear message (1 ms)
   ✓ Scenario 12 — table.delete() error → throws with clear message (1 ms)
-Tests: 12 passed, 12 total  — Time: 1.065 s
+  ✓ Scenario 13 — removeDocuments failure prevents purgeVectorCache call (1 ms)
+  ✓ Scenario 14 — prisma.workspaces.findMany failure in purgeDocument (1 ms)
+  ✓ Scenario 15 — prisma.workspaces.findMany failure in purgeFolder (7 ms)
+Tests: 15 passed, 15 total  — Time: 0.824 s
 ```
 
 ---
@@ -81,7 +84,9 @@ Tests: 12 passed, 12 total  — Time: 1.065 s
 
 ---
 
-## 5. Corrections post-revue ChatGPT (v1 → v2)
+## 5. Corrections post-revue ChatGPT (v1 → v2 → v3)
+
+### v1 → v2 (première revue ChatGPT)
 
 | # | Problème identifié par ChatGPT | Correction appliquée |
 |---|---|---|
@@ -95,6 +100,15 @@ Corrections dans les tests (v1 → v2) :
 - Scénarios 5-8 : ajout du stub `../../utils/prisma` (requis par `candidate-purgeDocument.js` v2)
 - Scénario 4 : mock de `$transaction` au lieu des opérations individuelles (évite les unhandled rejections)
 - Scénario 8 : `_getWorkspacesStrict()` alimenté via `mockPrismaWorkspacesFindMany` (remplace le stub `Workspace.where`)
+
+### v2 → v3 (seconde revue ChatGPT)
+
+| # | Problème identifié par ChatGPT | Correction appliquée |
+|---|---|---|
+| C5 | `purgeFolder()` supprimait les caches même si `removeDocuments` avait échoué | Vérification de `cleanupErrors` ajoutée entre la boucle `removeDocuments` et la boucle `purgeVectorCache` (early-exit) |
+| C6 | Aucun test de régression pour le défaut C5 | Scénario 13 ajouté |
+| C7 | Aucun test automatisé pour l'échec de `prisma.workspaces.findMany` dans `purgeDocument()` | Scénario 14 ajouté |
+| C8 | Aucun test automatisé pour l'échec de `prisma.workspaces.findMany` dans `purgeFolder()` | Scénario 15 ajouté |
 
 ---
 

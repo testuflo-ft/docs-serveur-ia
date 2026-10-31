@@ -173,6 +173,19 @@ async function purgeFolder(folderName = null) {
     }
   }
 
+  // PUR-02 v3: early-exit after association cleanup.
+  // purgeVectorCache must NOT run if any workspace association cleanup failed.
+  // Without this check, caches would be deleted even in partial-failure state,
+  // making the operation harder to retry (the vector cache describes the SQL /
+  // LanceDB state and should only be removed once that state is fully clean).
+  if (cleanupErrors.length > 0) {
+    console.error(
+      `[purgeFolder] Association cleanup errors in ${subFolder} — caches and folder NOT deleted:`,
+      cleanupErrors
+    );
+    return;
+  }
+
   for (const filename of filenames) {
     try {
       await purgeVectorCache(filename);
@@ -183,7 +196,7 @@ async function purgeFolder(folderName = null) {
 
   if (cleanupErrors.length > 0) {
     console.error(
-      `[purgeFolder] Cleanup errors in ${subFolder} — folder NOT deleted:`,
+      `[purgeFolder] Cache purge errors in ${subFolder} — folder NOT deleted:`,
       cleanupErrors
     );
     return;

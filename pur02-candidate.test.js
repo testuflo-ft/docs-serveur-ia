@@ -7,7 +7,7 @@
  * - No active LanceDB namespace is touched: lancedb is mocked via jest.mock().
  * - No real Workspace or Document model is loaded: all dependencies mocked.
  *
- * 12 scenarios:
+ * 15 scenarios:
  *   1. removeDocuments — absent document (not found → silently skip, no error)
  *   2. removeDocuments — SQL read error (_getStrict propagates, does NOT return null)
  *   3. removeDocuments — LanceDB error (aborts before SQL, record preserved)
@@ -22,6 +22,10 @@
  *  10.  No vectors found (SQL returns []) → returns false, no table.delete call
  *  11.  SQL read error → throws with clear message, no table.delete call
  *  12.  LanceDB table.delete() error → throws with clear message
+ *   --- Scenarios 13-15: v3 corrections ---
+ *  13.  purgeFolder — removeDocuments throws → purgeVectorCache NOT called (v3 early-exit)
+ *  14.  purgeDocument — prisma.workspaces.findMany throws → no cache or source deletion
+ *  15.  purgeFolder — prisma.workspaces.findMany throws → no cache, unlinkSync, or rmdirSync
  */
 
 "use strict";
@@ -758,5 +762,183 @@ describe("Scenario 12 — deleteDocumentFromNamespace: LanceDB table.delete erro
     expect(mockPrismaLocal.document_vectors.findMany).toHaveBeenCalledTimes(1);
     // table.delete was called (and threw).
     expect(tableDeleteFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 13 — purgeFolder: removeDocuments failure prevents purgeVectorCache (v3 early-exit)
+// ---------------------------------------------------------------------------
+describe("Scenario 13 — purgeFolder: removeDocuments failure prevents purgeVectorCache call", () => {
+  test("When removeDocuments throws, purgeVectorCache is NOT called (v3 early-exit)", async () => {
+    const DOCS_PATH = "/storage/documents";
+    const TARGET = "user-uploads";
+
+    const purgeVectorCacheMock = jest.fn().mockResolvedValue(undefined);
+    const removeDocumentsMock = jest
+      .fn()
+      .mockRejectedValue(new Error("LanceDB connection refused"));
+
+    // Valid flat folder: one regular file, no subdirs, no symlinks.
+    const fsMock = {
+      readdirSync: jest.fn((p, opts) => {
+        if (p === DOCS_PATH) return [TARGET];
+        if (opts && opts.withFileTypes) {
+          return [
+            { name: "doc.json", isFile: () => true, isSymbolicLink: () => false },
+          ];
+        }
+        return ["doc.json"];
+      }),
+      lstatSync: jest.fn(() => ({ isDirectory: () => true, isSymbolicLink: () => false })),
+      existsSync: jest.fn(() => true),
+      unlinkSync: jest.fn(),
+      rmdirSync: jest.fn(),
+    };
+
+    mockPrismaWorkspacesFindMany.mockResolvedValue([makeWorkspace()]);
+
+    const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    const stubs = {
+      ".": {
+        purgeVectorCache: purgeVectorCacheMock,
+        purgeSourceDocument: jest.fn().mockResolvedValue(undefined),
+        normalizePath: (p) => p,
+        isWithin: () => true,
+        documentsPath: DOCS_PATH,
+      },
+      "../../models/documents": {
+        Document: { removeDocuments: removeDocumentsMock },
+      },
+      "../../utils/prisma": mockPrisma,
+      fs: fsMock,
+    };
+
+    const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
+
+    await purgeFolder(TARGET);
+
+    // v3 early-exit: purgeVectorCache must NOT be called when removeDocuments fails.
+    expect(purgeVectorCacheMock).not.toHaveBeenCalled();
+    // Files and folder must NOT be deleted.
+    expect(fsMock.unlinkSync).not.toHaveBeenCalled();
+    expect(fsMock.rmdirSync).not.toHaveBeenCalled();
+
+    // An error log mentioning the association cleanup errors should be emitted.
+    const errorLog = consoleSpy.mock.calls.flat().join(" ");
+    expect(errorLog).toMatch(/Association cleanup errors/i);
+
+    consoleSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 14 — purgeDocument: prisma.workspaces.findMany throws → no cache or source deletion
+// ---------------------------------------------------------------------------
+describe("Scenario 14 — purgeDocument: prisma.workspaces.findMany failure prevents source deletion", () => {
+  test("When _getWorkspacesStrict throws, purgeVectorCache and purgeSourceDocument are NOT called", async () => {
+    const purgeVectorCacheMock = jest.fn().mockResolvedValue(undefined);
+    const purgeSourceDocumentMock = jest.fn().mockResolvedValue(undefined);
+
+    mockPrismaWorkspacesFindMany.mockRejectedValue(
+      new Error("SQLITE_IOERR: disk I/O error")
+    );
+
+    const stubs = {
+      ".": {
+        purgeVectorCache: purgeVectorCacheMock,
+        purgeSourceDocument: purgeSourceDocumentMock,
+        normalizePath: (p) => p,
+        isWithin: () => true,
+        documentsPath: "/storage/documents",
+      },
+      "../../models/documents": {
+        Document: { removeDocuments: jest.fn() },
+      },
+      "../../utils/prisma": mockPrisma,
+      fs: {
+        readdirSync: jest.fn().mockReturnValue([]),
+        lstatSync: jest.fn(),
+        existsSync: jest.fn(),
+        unlinkSync: jest.fn(),
+        rmdirSync: jest.fn(),
+      },
+    };
+
+    const { purgeDocument } = loadCandidateModule(CANDIDATE_PURGE, stubs);
+
+    // _getWorkspacesStrict catches and re-throws with a wrapped message.
+    await expect(
+      purgeDocument("workspace-folder/important-doc.json")
+    ).rejects.toThrow(/SQL error fetching workspaces/);
+
+    // No cache or source file deletion when workspace lookup fails.
+    expect(purgeVectorCacheMock).not.toHaveBeenCalled();
+    expect(purgeSourceDocumentMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 15 — purgeFolder: prisma.workspaces.findMany throws → no cache, file, or folder deletion
+// ---------------------------------------------------------------------------
+describe("Scenario 15 — purgeFolder: prisma.workspaces.findMany failure prevents all deletion", () => {
+  test("When _getWorkspacesStrict throws, no cache, unlinkSync, or rmdirSync is called", async () => {
+    const DOCS_PATH = "/storage/documents";
+    const TARGET = "user-uploads";
+
+    const purgeVectorCacheMock = jest.fn().mockResolvedValue(undefined);
+
+    // Valid flat folder: one regular file, no subdirs, no symlinks.
+    const fsMock = {
+      readdirSync: jest.fn((p, opts) => {
+        if (p === DOCS_PATH) return [TARGET];
+        if (opts && opts.withFileTypes) {
+          return [
+            { name: "doc.json", isFile: () => true, isSymbolicLink: () => false },
+          ];
+        }
+        return ["doc.json"];
+      }),
+      lstatSync: jest.fn(() => ({ isDirectory: () => true, isSymbolicLink: () => false })),
+      existsSync: jest.fn(() => true),
+      unlinkSync: jest.fn(),
+      rmdirSync: jest.fn(),
+    };
+
+    mockPrismaWorkspacesFindMany.mockRejectedValue(
+      new Error("SQLITE_IOERR: disk I/O error")
+    );
+
+    const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    const stubs = {
+      ".": {
+        purgeVectorCache: purgeVectorCacheMock,
+        purgeSourceDocument: jest.fn().mockResolvedValue(undefined),
+        normalizePath: (p) => p,
+        isWithin: () => true,
+        documentsPath: DOCS_PATH,
+      },
+      "../../models/documents": {
+        Document: { removeDocuments: jest.fn() },
+      },
+      "../../utils/prisma": mockPrisma,
+      fs: fsMock,
+    };
+
+    const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
+
+    await purgeFolder(TARGET);
+
+    // Nothing should be deleted when workspace lookup fails.
+    expect(purgeVectorCacheMock).not.toHaveBeenCalled();
+    expect(fsMock.unlinkSync).not.toHaveBeenCalled();
+    expect(fsMock.rmdirSync).not.toHaveBeenCalled();
+
+    // An error log mentioning the SQL workspace lookup failure should be emitted.
+    const errorLog = consoleSpy.mock.calls.flat().join(" ");
+    expect(errorLog).toMatch(/SQL error fetching workspaces/i);
+
+    consoleSpy.mockRestore();
   });
 });
