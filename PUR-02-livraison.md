@@ -1,8 +1,8 @@
-# PUR-02 — Livraison candidat correctif (v3)
+# PUR-02 — Livraison candidat correctif (v4)
 **Date** : 2026-10-31  
 **Version AnythingLLM cible** : v1.19.0  
-**Statut** : CANDIDAT v3 — non déployé, à valider avant intégration en production  
-**Révision** : Seconde revue ChatGPT appliquée et re-testée (15 / 15 PASS)
+**Statut** : CANDIDAT v4 — non déployé, à valider avant intégration en production  
+**Révision** : Troisième revue ChatGPT appliquée et re-testée (17 / 17 PASS)
 
 ---
 
@@ -17,13 +17,13 @@
 
 ---
 
-## 2. Empreintes SHA-256 (v3 — après seconde revue ChatGPT)
+## 2. Empreintes SHA-256 (v4 — après troisième revue ChatGPT)
 
 ```
 c826f004f1761c20b1e06300fc0f8d63416e03abe523b7e06a0259ec23180e44  candidate-lance-index.js
 de9c586043cbf63f70c4070cc18bc2f0871bc3a8b1d8caa79f32248fba8152eb  candidate-documents.js
-a4779221bcf9c6f02ce4d418e5fdddf6cbfb1a09a7d5f8e82c9953ad9046d8c3  candidate-purgeDocument.js
-ec8ab57bfc3e4222de412651fcd5551eb74b21d55041af050d9c74ebb7c26959  pur02-candidate.test.js
+15fc2ee1ae93b212dfe0656778fc48e76c3838a5b1468ea11def69317327ce59  candidate-purgeDocument.js
+1e516960785ef346087f1551471f39d48d6c4c96a929874db8af0b6577df17a6  pur02-candidate.test.js
 ```
 
 Références v1.19.0 (copies de laboratoire PUR-02-lab-20261029-191346, SHA vérifiés identiques à l'officiel) :
@@ -41,27 +41,29 @@ f6dda7152e476a6078533a8c06f458204d36c2abd550b08bbf69c8ccf232727a  ref-purgeDocum
 |---|---|
 | `node --check` sur les 3 candidats | ✓ Aucune erreur de syntaxe |
 | `node --check` sur le fichier de tests | ✓ |
-| Jest 29 — 15 scénarios (v3) | **15 / 15 PASS** |
+| Jest 29 — 17 scénarios (v4) | **17 / 17 PASS** |
 
-Sortie Jest complète (v3) :
+Sortie Jest complète (v4) :
 ```
 PASS server/__tests__/pur02-candidate.test.js
-  ✓ Scenario 1 — absent document silently skipped (4 ms)
-  ✓ Scenario 2 — SQL read error propagates (50 ms)
+  ✓ Scenario 1 — absent document silently skipped (6 ms)
+  ✓ Scenario 2 — SQL read error propagates (77 ms)
   ✓ Scenario 3 — LanceDB error aborts; SQL record preserved (4 ms)
-  ✓ Scenario 4 — SQL cleanup error propagates with orphan warning (3 ms)
+  ✓ Scenario 4 — SQL cleanup error propagates with orphan warning (2 ms)
   ✓ Scenario 5 — custom-documents folder rejected (2 ms)
   ✓ Scenario 6 — nested subdirectory aborts operation (2 ms)
   ✓ Scenario 7 — symbolic link entry aborts operation (1 ms)
   ✓ Scenario 8 — cleanup failure preserves source file (1 ms)
-  ✓ Scenario 9 — namespace absent → false, no LanceDB or SQL call (1 ms)
+  ✓ Scenario 9 — namespace absent → false, no LanceDB or SQL call (2 ms)
   ✓ Scenario 10 — no vectors found → false, no table.delete (3 ms)
   ✓ Scenario 11 — SQL read error → throws with clear message (1 ms)
   ✓ Scenario 12 — table.delete() error → throws with clear message (1 ms)
-  ✓ Scenario 13 — removeDocuments failure prevents purgeVectorCache call (1 ms)
+  ✓ Scenario 13 — removeDocuments failure prevents purgeVectorCache call (2 ms)
   ✓ Scenario 14 — prisma.workspaces.findMany failure in purgeDocument (1 ms)
-  ✓ Scenario 15 — prisma.workspaces.findMany failure in purgeFolder (7 ms)
-Tests: 15 passed, 15 total  — Time: 0.824 s
+  ✓ Scenario 15 — prisma.workspaces.findMany failure in purgeFolder (2 ms)
+  ✓ Scenario 16 — purgeVectorCache failure throws and prevents folder deletion (1 ms)
+  ✓ Scenario 17 — normalizePath canonical path used for all operations (3 ms)
+Tests: 17 passed, 17 total  — Time: 0.76 s
 ```
 
 ---
@@ -109,6 +111,16 @@ Corrections dans les tests (v1 → v2) :
 | C6 | Aucun test de régression pour le défaut C5 | Scénario 13 ajouté |
 | C7 | Aucun test automatisé pour l'échec de `prisma.workspaces.findMany` dans `purgeDocument()` | Scénario 14 ajouté |
 | C8 | Aucun test automatisé pour l'échec de `prisma.workspaces.findMany` dans `purgeFolder()` | Scénario 15 ajouté |
+
+### v3 → v4 (troisième revue ChatGPT)
+
+| # | Problème identifié par ChatGPT | Correction appliquée |
+|---|---|---|
+| C9 | `purgeFolder()` : les trois `return` sur erreur masquent les échecs à l'appelant (HTTP 200 en cas d'échec) | Remplacés par `throw new Error(...)` pour chaque type d'erreur : SQL workspace, association cleanup, cache purge |
+| C10 | `purgeDocument()` : `normalizePath(filename)` appelé pour validation uniquement, valeur de retour ignorée ; les trois opérations utilisaient le chemin original non normalisé | Normalisation stockée dans `const normalized` ; toutes les opérations (`removeDocuments`, `purgeVectorCache`, `purgeSourceDocument`) utilisent `normalized` |
+| C11 | Scénarios 13 et 15 invalides après C9 (appellent `purgeFolder()` sans attendre un `rejects`) | Mis à jour vers `await expect(purgeFolder(TARGET)).rejects.toThrow(...)` |
+| C12 | Aucun test de régression pour l'échec de `purgeVectorCache` dans `purgeFolder()` | Scénario 16 ajouté |
+| C13 | Aucun test de régression pour la normalisation du chemin dans `purgeDocument()` | Scénario 17 ajouté |
 
 ---
 

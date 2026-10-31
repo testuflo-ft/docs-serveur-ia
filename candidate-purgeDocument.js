@@ -45,7 +45,12 @@ async function _getWorkspacesStrict() {
  * cleaned. The caller should log and surface this condition.
  */
 async function purgeDocument(filename = null) {
-  if (!filename || !normalizePath(filename)) return;
+  if (!filename) return;
+  // Normalize once; use the canonical path for every subsequent operation so
+  // that SQL associations, the vector cache, and the source file all agree on
+  // the same identifier.  A non-conforming path is rejected immediately.
+  const normalized = normalizePath(filename);
+  if (!normalized) return;
 
   // Step 1: Remove workspace associations and LanceDB vectors first.
   // Use _getWorkspacesStrict() so a SQL failure throws rather than being
@@ -59,15 +64,15 @@ async function purgeDocument(filename = null) {
     );
   }
   for (const workspace of workspaces) {
-    await Document.removeDocuments(workspace, [filename]);
+    await Document.removeDocuments(workspace, [normalized]);
   }
 
   // Step 2: Remove the vector cache (safe to delete now; association cleanup
   // completed successfully).
-  await purgeVectorCache(filename);
+  await purgeVectorCache(normalized);
 
   // Step 3: Remove the source document file.
-  await purgeSourceDocument(filename);
+  await purgeSourceDocument(normalized);
   return;
 }
 
@@ -153,7 +158,9 @@ async function purgeFolder(folderName = null) {
       `[purgeFolder] SQL error fetching workspaces — folder NOT deleted:`,
       sqlError.message
     );
-    return;
+    throw new Error(
+      `[purgeFolder] SQL error fetching workspaces: ${sqlError.message}`
+    );
   }
 
   // Collect cleanup errors; if any step fails, abort folder deletion so the
@@ -183,7 +190,9 @@ async function purgeFolder(folderName = null) {
       `[purgeFolder] Association cleanup errors in ${subFolder} — caches and folder NOT deleted:`,
       cleanupErrors
     );
-    return;
+    throw new Error(
+      `[purgeFolder] Association cleanup errors in ${subFolder}: ${cleanupErrors.join("; ")}`
+    );
   }
 
   for (const filename of filenames) {
@@ -199,7 +208,9 @@ async function purgeFolder(folderName = null) {
       `[purgeFolder] Cache purge errors in ${subFolder} — folder NOT deleted:`,
       cleanupErrors
     );
-    return;
+    throw new Error(
+      `[purgeFolder] Cache purge errors in ${subFolder}: ${cleanupErrors.join("; ")}`
+    );
   }
 
   // All cleanup steps succeeded. Delete files individually to avoid any

@@ -7,7 +7,7 @@
  * - No active LanceDB namespace is touched: lancedb is mocked via jest.mock().
  * - No real Workspace or Document model is loaded: all dependencies mocked.
  *
- * 15 scenarios:
+ * 17 scenarios:
  *   1. removeDocuments — absent document (not found → silently skip, no error)
  *   2. removeDocuments — SQL read error (_getStrict propagates, does NOT return null)
  *   3. removeDocuments — LanceDB error (aborts before SQL, record preserved)
@@ -26,6 +26,9 @@
  *  13.  purgeFolder — removeDocuments throws → purgeVectorCache NOT called (v3 early-exit)
  *  14.  purgeDocument — prisma.workspaces.findMany throws → no cache or source deletion
  *  15.  purgeFolder — prisma.workspaces.findMany throws → no cache, unlinkSync, or rmdirSync
+ *   --- Scenarios 16-17: v4 corrections ---
+ *  16.  purgeFolder — purgeVectorCache throws → purgeFolder throws, no files deleted
+ *  17.  purgeDocument — normalizePath return value used throughout (regression)
  */
 
 "use strict";
@@ -816,17 +819,15 @@ describe("Scenario 13 — purgeFolder: removeDocuments failure prevents purgeVec
 
     const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
 
-    await purgeFolder(TARGET);
+    // v4: purgeFolder now throws instead of silently returning when association
+    // cleanup errors are collected.
+    await expect(purgeFolder(TARGET)).rejects.toThrow(/Association cleanup errors/i);
 
-    // v3 early-exit: purgeVectorCache must NOT be called when removeDocuments fails.
+    // purgeVectorCache must NOT be called when removeDocuments fails.
     expect(purgeVectorCacheMock).not.toHaveBeenCalled();
     // Files and folder must NOT be deleted.
     expect(fsMock.unlinkSync).not.toHaveBeenCalled();
     expect(fsMock.rmdirSync).not.toHaveBeenCalled();
-
-    // An error log mentioning the association cleanup errors should be emitted.
-    const errorLog = consoleSpy.mock.calls.flat().join(" ");
-    expect(errorLog).toMatch(/Association cleanup errors/i);
 
     consoleSpy.mockRestore();
   });
@@ -928,17 +929,137 @@ describe("Scenario 15 — purgeFolder: prisma.workspaces.findMany failure preven
 
     const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
 
-    await purgeFolder(TARGET);
+    // v4: purgeFolder now throws instead of silently returning on SQL error.
+    await expect(purgeFolder(TARGET)).rejects.toThrow(/SQL error fetching workspaces/i);
 
     // Nothing should be deleted when workspace lookup fails.
     expect(purgeVectorCacheMock).not.toHaveBeenCalled();
     expect(fsMock.unlinkSync).not.toHaveBeenCalled();
     expect(fsMock.rmdirSync).not.toHaveBeenCalled();
 
-    // An error log mentioning the SQL workspace lookup failure should be emitted.
-    const errorLog = consoleSpy.mock.calls.flat().join(" ");
-    expect(errorLog).toMatch(/SQL error fetching workspaces/i);
+    consoleSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 16 — purgeFolder: purgeVectorCache throws → purgeFolder throws, no files deleted
+// ---------------------------------------------------------------------------
+describe("Scenario 16 — purgeFolder: purgeVectorCache failure throws and prevents folder deletion", () => {
+  test("When purgeVectorCache rejects, purgeFolder throws and does NOT delete files or folder", async () => {
+    const DOCS_PATH = "/storage/documents";
+    const TARGET = "user-uploads";
+
+    const purgeVectorCacheMock = jest
+      .fn()
+      .mockRejectedValue(new Error("vector cache write failed"));
+    const removeDocumentsMock = jest.fn().mockResolvedValue(undefined);
+
+    const fsMock = {
+      readdirSync: jest.fn((p, opts) => {
+        if (p === DOCS_PATH) return [TARGET];
+        if (opts && opts.withFileTypes) {
+          return [
+            { name: "doc.json", isFile: () => true, isSymbolicLink: () => false },
+          ];
+        }
+        return ["doc.json"];
+      }),
+      lstatSync: jest.fn(() => ({ isDirectory: () => true, isSymbolicLink: () => false })),
+      existsSync: jest.fn(() => true),
+      unlinkSync: jest.fn(),
+      rmdirSync: jest.fn(),
+    };
+
+    mockPrismaWorkspacesFindMany.mockResolvedValue([makeWorkspace()]);
+
+    const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    const stubs = {
+      ".": {
+        purgeVectorCache: purgeVectorCacheMock,
+        purgeSourceDocument: jest.fn().mockResolvedValue(undefined),
+        normalizePath: (p) => p,
+        isWithin: () => true,
+        documentsPath: DOCS_PATH,
+      },
+      "../../models/documents": {
+        Document: { removeDocuments: removeDocumentsMock },
+      },
+      "../../utils/prisma": mockPrisma,
+      fs: fsMock,
+    };
+
+    const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
+
+    // v4: purgeFolder throws when purgeVectorCache fails (cache purge errors).
+    await expect(purgeFolder(TARGET)).rejects.toThrow(/Cache purge errors/i);
+
+    // removeDocuments succeeded (associations were cleaned).
+    expect(removeDocumentsMock).toHaveBeenCalledTimes(1);
+    // purgeVectorCache was called and threw.
+    expect(purgeVectorCacheMock).toHaveBeenCalledTimes(1);
+    // Files and folder must NOT be deleted.
+    expect(fsMock.unlinkSync).not.toHaveBeenCalled();
+    expect(fsMock.rmdirSync).not.toHaveBeenCalled();
 
     consoleSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 17 — purgeDocument: normalizePath return value used throughout (regression)
+// ---------------------------------------------------------------------------
+describe("Scenario 17 — purgeDocument: normalizePath canonical path used for all operations", () => {
+  test("All three operations receive the normalized path, not the original raw filename", async () => {
+    const ORIGINAL = "workspace-folder//doc.json";
+    const CANONICAL = "workspace-folder/doc.json";
+
+    const purgeVectorCacheMock = jest.fn().mockResolvedValue(undefined);
+    const purgeSourceDocumentMock = jest.fn().mockResolvedValue(undefined);
+    const removeDocumentsMock = jest.fn().mockResolvedValue(undefined);
+
+    mockPrismaWorkspacesFindMany.mockResolvedValue([makeWorkspace()]);
+
+    const stubs = {
+      ".": {
+        purgeVectorCache: purgeVectorCacheMock,
+        purgeSourceDocument: purgeSourceDocumentMock,
+        // normalizePath collapses the double slash to single.
+        normalizePath: (p) => (p === ORIGINAL ? CANONICAL : p),
+        isWithin: () => true,
+        documentsPath: "/storage/documents",
+      },
+      "../../models/documents": {
+        Document: { removeDocuments: removeDocumentsMock },
+      },
+      "../../utils/prisma": mockPrisma,
+      fs: {
+        readdirSync: jest.fn().mockReturnValue([]),
+        lstatSync: jest.fn(),
+        existsSync: jest.fn(),
+        unlinkSync: jest.fn(),
+        rmdirSync: jest.fn(),
+      },
+    };
+
+    const { purgeDocument } = loadCandidateModule(CANDIDATE_PURGE, stubs);
+
+    await purgeDocument(ORIGINAL);
+
+    // All three operations must receive the canonical (normalized) path.
+    expect(removeDocumentsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      [CANONICAL]
+    );
+    expect(purgeVectorCacheMock).toHaveBeenCalledWith(CANONICAL);
+    expect(purgeSourceDocumentMock).toHaveBeenCalledWith(CANONICAL);
+
+    // None of them must have received the original (un-normalized) path.
+    expect(removeDocumentsMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      [ORIGINAL]
+    );
+    expect(purgeVectorCacheMock).not.toHaveBeenCalledWith(ORIGINAL);
+    expect(purgeSourceDocumentMock).not.toHaveBeenCalledWith(ORIGINAL);
   });
 });
