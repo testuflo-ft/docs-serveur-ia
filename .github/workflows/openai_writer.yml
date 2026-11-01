@@ -32,50 +32,60 @@ jobs:
 
       - name: Ask ChatGPT via GitHub Models
         env:
-          # On utilise le token GitHub natif au lieu d'une clé OpenAI payante
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           USER_PROMPT: ${{ github.event.inputs.prompt }}
           FILE_PATH: ${{ github.event.inputs.file_path }}
         run: |
           python -c "
           import os
+          import sys
           from openai import OpenAI
 
-          # Configuration pour appeler les serveurs gratuits de GitHub
-          client = OpenAI(
-              base_url='https://azure.com',
-              api_key=os.environ['GITHUB_TOKEN']
-          )
-          
-          file_path = os.environ['FILE_PATH']
-          user_prompt = os.environ['USER_PROMPT']
+          try:
+              client = OpenAI(
+                  base_url='https://azure.com',
+                  api_key=os.environ['GITHUB_TOKEN']
+              )
+              
+              file_path = os.environ['FILE_PATH']
+              user_prompt = os.environ['USER_PROMPT']
 
-          current_content = ''
-          if os.path.exists(file_path):
-              with open(file_path, 'r', encoding='utf-8') as f:
-                  current_content = f.read()
+              current_content = ''
+              if os.path.exists(file_path):
+                  with open(file_path, 'r', encoding='utf-8') as f:
+                      current_content = f.read()
 
-          system_instruction = (
-              'Tu es un developpeur qui modifie ou cree des fichiers de code ou de documentation. '
-              'Renvoie uniquement le contenu final brut du fichier. '
-              'Ne mets aucun bloc de code markdown, pas de balises avec trois backticks au debut ou a la fin, et aucun commentaire annexe.'
-          )
+              system_instruction = (
+                  'Tu es un developpeur qui modifie ou cree des fichiers de code ou de documentation. '
+                  'Renvoie uniquement le contenu final brut du fichier. '
+                  'Ne mets aucun bloc de code markdown, pas de balises avec trois backticks au debut ou a la fin, et aucun commentaire annexe.'
+              )
 
-          prompt_content = f'Contenu actuel du fichier:\n\n{current_content}\n\nInstruction de modification:\n{user_prompt}'
+              prompt_content = f'Contenu actuel du fichier:\n\n{current_content}\n\nInstruction de modification:\n{user_prompt}'
 
-          # Appel du modèle officiel GPT-4o mis à disposition par GitHub
-          response = client.chat.completions.create(
-              model='gpt-4o',
-              messages=[
-                  {'role': 'system', 'content': system_instruction},
-                  {'role': 'user', 'content': prompt_content}
-              ]
-          )
+              response = client.chat.completions.create(
+                  model='gpt-4o',
+                  messages=[
+                      {'role': 'system', 'content': system_instruction},
+                      {'role': 'user', 'content': prompt_content}
+                  ]
+              )
 
-          new_content = response.choices.message.content.strip()
+              # Vérification du type de réponse reçu pour éviter le crash
+              if hasattr(response, 'choices'):
+                  new_content = response.choices[0].message.content.strip()
+                  with open(file_path, 'w', encoding='utf-8') as f:
+                      f.write(new_content)
+              else:
+                  print('--- ERREUR SERVEUR GITHUB MODELS ---')
+                  print('Le serveur a renvoyé un texte inattendu au lieu d un objet :')
+                  print(response)
+                  sys.exit(1)
 
-          with open(file_path, 'w', encoding='utf-8') as f:
-              f.write(new_content)
+          except Exception as e:
+              print('--- ERREUR SYSTEME ---')
+              print(e)
+              sys.exit(1)
           "
 
       - name: Commit and Push changes
