@@ -1,44 +1,44 @@
 name: OpenAI Writer Bot
 
 on:
-..workflow_dispatch:
-....inputs:
-......prompt:
-........description: "Que voulez-vous que l'IA écrive ou modifie ?"
-........required: true
-........default: "Ajoute une section FAQ à mon fichier README.md"
-......file_path:
-........description: "Chemin du fichier à modifier (ex: README.md)"
-........required: true
-........default: "README.md"
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: "Que voulez-vous que l'IA écrive ou modifie ?"
+        required: true
+        default: "Ajoute une section FAQ à mon fichier README.md"
+      file_path:
+        description: "Chemin du fichier à modifier (ex: README.md)"
+        required: true
+        default: "README.md"
 
 permissions:
-..contents: write
+  contents: write
 
 jobs:
-..write-code:
-....runs-on: ubuntu-latest
-....steps:
-......- name: Checkout repository
-........uses: actions/checkout@v4
+  write-code:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-......- name: Setup Python
-........uses: actions/setup-python@v5
-........with:
-..........python-version: '3.11'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-......- name: Install OpenAI Library
-........run: pip install openai
+      - name: Install OpenAI Library
+        run: pip install openai
 
-......- name: Ask OpenAI and Update File
-........env:
-..........OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-..........USER_PROMPT: ${{ github.event.inputs.prompt }}
-..........FILE_PATH: ${{ github.event.inputs.file_path }}
-........run: |
-..........python -c "
-..........import os
-..........from openai import OpenAI
+      - name: Ask OpenAI and Update File
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          USER_PROMPT: ${{ github.event.inputs.prompt }}
+          FILE_PATH: ${{ github.event.inputs.file_path }}
+        run: |
+          python -c "
+          import os
+          from openai import OpenAI
 
           client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
           file_path = os.environ['FILE_PATH']
@@ -71,10 +71,10 @@ jobs:
               f.write(new_content)
           "
 
-......- name: Commit and Push changes
-........run: |
-..........git config --global user.name "github-actions[bot]"
-..........git config --global user.email "github-actions[bot]@://github.com"
-..........git add "${{ github.event.inputs.file_path }}"
-..........git commit -m "Mise à jour automatique par OpenAI Bot" || echo "Aucune modification détectée"
-..........git push
+      - name: Commit and Push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@://github.com"
+          git add "${{ github.event.inputs.file_path }}"
+          git commit -m "Mise à jour automatique par OpenAI Bot" || echo "Aucune modification détectée"
+          git push
