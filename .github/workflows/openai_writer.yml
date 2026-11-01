@@ -6,11 +6,14 @@ inputs:
 prompt:
 description: "Que voulez-vous que l'IA écrive ou modifie ?"
 required: true
-default: 'Ajoute une section FAQ à mon fichier README.md'
+default: "Ajoute une section FAQ à mon fichier README.md"
 file_path:
-description: 'Chemin du fichier à modifier (ex: README.md)'
+description: "Chemin du fichier à modifier (ex: README.md)"
 required: true
-default: 'README.md' 
+default: "README.md" 
+
+permissions:
+contents: write 
 
 jobs:
 write-code:
