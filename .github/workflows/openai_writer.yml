@@ -1,4 +1,4 @@
-name: OpenAI Writer Bot
+name: OpenAI Writer Bot (Gratuit)
 
 on:
   workflow_dispatch:
@@ -30,9 +30,10 @@ jobs:
       - name: Install OpenAI Library
         run: pip install openai
 
-      - name: Ask OpenAI and Update File
+      - name: Ask ChatGPT via GitHub Models
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # On utilise le token GitHub natif au lieu d'une clé OpenAI payante
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           USER_PROMPT: ${{ github.event.inputs.prompt }}
           FILE_PATH: ${{ github.event.inputs.file_path }}
         run: |
@@ -40,7 +41,12 @@ jobs:
           import os
           from openai import OpenAI
 
-          client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+          # Configuration pour appeler les serveurs gratuits de GitHub
+          client = OpenAI(
+              base_url='https://azure.com',
+              api_key=os.environ['GITHUB_TOKEN']
+          )
+          
           file_path = os.environ['FILE_PATH']
           user_prompt = os.environ['USER_PROMPT']
 
@@ -57,8 +63,9 @@ jobs:
 
           prompt_content = f'Contenu actuel du fichier:\n\n{current_content}\n\nInstruction de modification:\n{user_prompt}'
 
+          # Appel du modèle officiel GPT-4o mis à disposition par GitHub
           response = client.chat.completions.create(
-              model='gpt-4o-mini',
+              model='gpt-4o',
               messages=[
                   {'role': 'system', 'content': system_instruction},
                   {'role': 'user', 'content': prompt_content}
@@ -74,7 +81,7 @@ jobs:
       - name: Commit and Push changes
         run: |
           git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.email "github-actions[bot]@://github.com"
           git add "${{ github.event.inputs.file_path }}"
-          git commit -m "Mise à jour automatique par OpenAI Bot" || echo "Aucune modification détectée"
+          git commit -m "Mise à jour automatique par ChatGPT (GitHub Models)" || echo "Aucune modification détectée"
           git push
