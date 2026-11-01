@@ -51,8 +51,8 @@ jobs:
 
           system_instruction = (
               'Tu es un developpeur qui modifie ou cree des fichiers de code ou de documentation. '
-              'Renvoie uniquement le contenu final brut du fichier, sans bloc de code markdown '
-              '(pas de \`\`\` au debut ou a la fin) et sans commentaires annexes.'
+              'Renvoie uniquement le contenu final brut du fichier. '
+              'Ne mets aucun bloc de code markdown, pas de balises avec trois backticks au debut ou a la fin, et aucun commentaire annexe.'
           )
 
           prompt_content = f'Contenu actuel du fichier:\n\n{current_content}\n\nInstruction de modification:\n{user_prompt}'
@@ -74,7 +74,7 @@ jobs:
       - name: Commit and Push changes
         run: |
           git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@://github.com"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add "${{ github.event.inputs.file_path }}"
           git commit -m "Mise à jour automatique par OpenAI Bot" || echo "Aucune modification détectée"
           git push
