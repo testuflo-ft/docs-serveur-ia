@@ -1,0 +1,148 @@
+--- ../candidate-purgeDocument.js	2026-10-31 17:21:34.423787390 +0800
++++ ./candidate-purgeDocument-v4e.js	2026-11-02 21:57:30.522117456 +0800
+@@ -21,6 +21,29 @@
+ }
+ 
+ /**
++ * PUR-02-E PATCH: creates a typed error for purgeFolder validation failures.
++ *
++ * Both HTTP route handlers read err.statusCode and err.code to produce a
++ * non-2xx response. Every validation rejection in purgeFolder must carry these
++ * properties so the handler can distinguish "folder protected" (403) from
++ * "folder not found" (404) from "unexpected content" (400).
++ *
++ * Without this, the handler falls through to response.status(200).json(result)
++ * with result === undefined, producing a false HTTP success.
++ *
++ * @param {number} statusCode - HTTP status code to forward to the route handler
++ * @param {string} code - Machine-readable error code
++ * @param {string} message - Human-readable description
++ * @returns {Error}
++ */
++function folderError(statusCode, code, message) {
++  const err = new Error(message);
++  err.statusCode = statusCode;
++  err.code = code;
++  return err;
++}
++
++/**
+  * PUR-02 PATCH: purgeDocument
+  *
+  * Changes vs original:
+@@ -82,7 +105,7 @@
+  * Changes vs original:
+  * 1. Rejects the folder if it contains nested subdirectories or symbolic links.
+  *    The function is documented as non-recursive and must only contain flat
+- *    regular files. Unexpected entries abort the operation with an error log.
++ *    regular files. Unexpected entries abort the operation with a typed error.
+  * 2. Rejects top-level symlinks when building the list of removable folders.
+  * 3. Collects cleanup errors (purgeVectorCache + removeDocuments) instead of
+  *    swallowing them via unhandled Promise rejections. If any cleanup step
+@@ -92,6 +115,20 @@
+  *    replacing the original fs.rmSync({ recursive: true }) that would
+  *    unconditionally recurse into any content regardless of what was cleaned.
+  *
++ * PUR-02-E FIX (error contract):
++ * All early-exit paths now throw a typed error (folderError) instead of
++ * returning undefined. This ensures the HTTP route handler can propagate the
++ * correct non-2xx status instead of sending HTTP 200 with an empty body.
++ *
++ *   400 FOLDER_NAME_REQUIRED    — folderName is null, empty, or not a string
++ *   400 FOLDER_OUTSIDE_DOCUMENTS — path traversal attempt (isWithin fails)
++ *   400 FOLDER_UNEXPECTED_ENTRIES — subdir or symlink found inside folder
++ *   403 FOLDER_PROTECTED        — custom-documents or non-removable directory
++ *   404 FOLDER_NOT_FOUND        — folder path does not exist on disk
++ *
++ * On success the function returns an explicit result object so the handler
++ * can send a meaningful HTTP 200 body rather than serializing undefined.
++ *
+  * Residual limits:
+  * - Prisma and LanceDB are not transactional together. A partial failure
+  *   inside removeDocuments() leaves an inconsistent state that is logged but
+@@ -100,10 +137,17 @@
+  *   per workspace to avoid obscuring individual failures in a parallel fan-out.
+  *
+  * @param {string} folderName - The name/path of the folder to purge.
+- * @returns {Promise<void>}
++ * @returns {Promise<{success: true, message: string}>}
+  */
+ async function purgeFolder(folderName = null) {
+-  if (!folderName) return;
++  // PUR-02-E fix #1: reject missing or invalid folder name with 400
++  if (!folderName || typeof folderName !== "string" || !folderName.trim())
++    throw folderError(
++      400,
++      "FOLDER_NAME_REQUIRED",
++      "[purgeFolder] folderName must be a non-empty string."
++    );
++
+   const subFolder = normalizePath(folderName);
+   const subFolderPath = path.resolve(documentsPath, subFolder);
+ 
+@@ -121,12 +165,27 @@
+     })
+     .filter((subFolder) => !!subFolder);
+ 
+-  if (
+-    !validRemovableSubFolders.includes(subFolder) ||
+-    !fs.existsSync(subFolderPath) ||
+-    !isWithin(documentsPath, subFolderPath)
+-  )
+-    return;
++  // PUR-02-E fix #2: replace the combined silent return with three typed throws.
++  // Order is intentional: security check (traversal) before any filesystem
++  // access, then existence, then allowlist.
++  if (!isWithin(documentsPath, subFolderPath))
++    throw folderError(
++      400,
++      "FOLDER_OUTSIDE_DOCUMENTS",
++      `[purgeFolder] "${subFolder}" is outside the documents directory.`
++    );
++  if (!fs.existsSync(subFolderPath))
++    throw folderError(
++      404,
++      "FOLDER_NOT_FOUND",
++      `[purgeFolder] Folder "${subFolder}" was not found.`
++    );
++  if (!validRemovableSubFolders.includes(subFolder))
++    throw folderError(
++      403,
++      "FOLDER_PROTECTED",
++      `[purgeFolder] "${subFolder}" is protected or is not a removable folder.`
++    );
+ 
+   // Reject folders that contain nested subdirectories or symbolic links.
+   // purgeFolder is documented as non-recursive and is only safe to use with
+@@ -135,13 +194,15 @@
+   const unexpected = entries.filter(
+     (e) => !e.isFile() || e.isSymbolicLink()
+   );
++  // PUR-02-E fix #3: throw instead of log+return so the HTTP handler propagates
++  // a 400 rather than a false HTTP 200.
+   if (unexpected.length > 0) {
+-    console.error(
+-      `[purgeFolder] ${subFolder} contains unexpected entries ` +
+-        `(subdirectories or symlinks): ` +
+-        `${unexpected.map((e) => e.name).join(", ")}. Aborting.`
++    const names = unexpected.map((e) => e.name).join(", ");
++    throw folderError(
++      400,
++      "FOLDER_UNEXPECTED_ENTRIES",
++      `[purgeFolder] "${subFolder}" contains unexpected entries (subdirectories or symlinks): ${names}.`
+     );
+-    return;
+   }
+ 
+   const filenames = entries.map((e) =>
+@@ -222,7 +283,9 @@
+   // providing a final safety check against unexpected residual content.
+   fs.rmdirSync(subFolderPath);
+ 
+-  return;
++  // PUR-02-E fix: explicit success return so the HTTP handler serializes a
++  // meaningful body instead of undefined (which becomes HTTP 200 + empty body).
++  return { success: true, message: `Folder "${subFolder}" purged successfully.` };
+ }
+ 
+ module.exports = {

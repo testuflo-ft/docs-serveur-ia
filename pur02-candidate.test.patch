@@ -1,0 +1,306 @@
+--- ../pur02-candidate.test.js	2026-10-31 17:21:34.423787390 +0800
++++ ./pur02-candidate.test-v4e.js	2026-11-02 22:10:00.000000000 +0800
+
+================================================================================
+SECTION 1 — File header: update scenario list (lines 1-32)
+================================================================================
+
+@@ -14,11 +14,24 @@
+  *   5. purgeFolder — custom-documents folder is rejected
+  *   6. purgeFolder — folder containing a nested subdirectory is rejected
+  *   7. purgeFolder — folder containing a symbolic link entry is rejected
++ *
++ * PUR-02-E additions (error contract):
++ *   5b. purgeFolder — null/empty name throws 400 FOLDER_NAME_REQUIRED
++ *   5c. purgeFolder — non-existent folder throws 404 FOLDER_NOT_FOUND
++ *   5d. purgeFolder — path traversal throws 400 FOLDER_OUTSIDE_DOCUMENTS
++ *
++ * Updated assertions for S05, S06, S07:
++ *   All three now use .rejects.toMatchObject() to verify typed errors.
++ *   S06 and S07 no longer expect a console.error call (throw replaces log+return).
+
+================================================================================
+SECTION 2 — Scenario 5: custom-documents (lines 352-395)
+================================================================================
+
+@@ -352,20 +352,22 @@
+ describe("Scenario 5 — purgeFolder: custom-documents folder rejected", () => {
+-  test("purgeFolder('custom-documents') returns without calling any cleanup", async () => {
++  test("purgeFolder('custom-documents') throws FOLDER_PROTECTED 403", async () => {
+     const DOCS_PATH = "/storage/documents";
+
+     const fsMock = {
+       readdirSync: jest.fn((p) => {
+         if (p === DOCS_PATH) return ["custom-documents"];
+         return [];
+       }),
+       lstatSync: jest.fn(() => ({ isDirectory: () => true, isSymbolicLink: () => false })),
+       existsSync: jest.fn(() => true),
+       unlinkSync: jest.fn(),
+       rmdirSync: jest.fn(),
+     };
+
+     const stubs = {
+       ".": {
+         purgeVectorCache: jest.fn().mockResolvedValue(undefined),
+         purgeSourceDocument: jest.fn().mockResolvedValue(undefined),
+         normalizePath: (p) => p,
+         isWithin: () => true,
+         documentsPath: DOCS_PATH,
+       },
+       "../../models/documents": {
+         Document: { removeDocuments: jest.fn().mockResolvedValue(undefined) },
+       },
+       "../../utils/prisma": mockPrisma,
+       fs: fsMock,
+     };
+
+     const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
+
+-    await purgeFolder("custom-documents");
+-
+-    // The folder list contains only custom-documents, which is excluded →
+-    // validRemovableSubFolders will be empty → return early.
++    // custom-documents is excluded from validRemovableSubFolders →
++    // folderError(403, "FOLDER_PROTECTED") must be thrown.
++    await expect(purgeFolder("custom-documents")).rejects.toMatchObject({
++      statusCode: 403,
++      code: "FOLDER_PROTECTED",
++      message: expect.stringMatching(/protected/i),
++    });
+     expect(fsMock.unlinkSync).not.toHaveBeenCalled();
+     expect(fsMock.rmdirSync).not.toHaveBeenCalled();
+     expect(stubs["../../models/documents"].Document.removeDocuments).not.toHaveBeenCalled();
+   });
+ });
+
+================================================================================
+SECTION 3 — New Scenarios 5b / 5c / 5d (insert after Scenario 5, before Scenario 6)
+================================================================================
+
+@@ INSERT after line 395 (end of Scenario 5 describe block) @@
+
++// ---------------------------------------------------------------------------
++// Scenario 5b — purgeFolder: null or empty name throws 400
++// ---------------------------------------------------------------------------
++describe("Scenario 5b — purgeFolder: null/empty name rejected with 400", () => {
++  const DOCS_PATH = "/storage/documents";
++  const fsMock = {
++    readdirSync: jest.fn(() => []),
++    lstatSync: jest.fn(() => ({ isDirectory: () => true, isSymbolicLink: () => false })),
++    existsSync: jest.fn(() => false),
++    unlinkSync: jest.fn(),
++    rmdirSync: jest.fn(),
++  };
++  const stubs = {
++    ".": {
++      purgeVectorCache: jest.fn(),
++      purgeSourceDocument: jest.fn(),
++      normalizePath: (p) => p,
++      isWithin: () => true,
++      documentsPath: DOCS_PATH,
++    },
++    "../../models/documents": {
++      Document: { removeDocuments: jest.fn() },
++    },
++    "../../utils/prisma": mockPrisma,
++    fs: fsMock,
++  };
++
++  test("purgeFolder(null) throws FOLDER_NAME_REQUIRED", async () => {
++    const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
++    await expect(purgeFolder(null)).rejects.toMatchObject({
++      statusCode: 400,
++      code: "FOLDER_NAME_REQUIRED",
++    });
++  });
++
++  test("purgeFolder('') throws FOLDER_NAME_REQUIRED", async () => {
++    const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
++    await expect(purgeFolder("")).rejects.toMatchObject({
++      statusCode: 400,
++      code: "FOLDER_NAME_REQUIRED",
++    });
++  });
++
++  test("purgeFolder('   ') (whitespace only) throws FOLDER_NAME_REQUIRED", async () => {
++    const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
++    await expect(purgeFolder("   ")).rejects.toMatchObject({
++      statusCode: 400,
++      code: "FOLDER_NAME_REQUIRED",
++    });
++  });
++});
++
++// ---------------------------------------------------------------------------
++// Scenario 5c — purgeFolder: non-existent folder throws 404
++// ---------------------------------------------------------------------------
++describe("Scenario 5c — purgeFolder: non-existent folder throws 404 FOLDER_NOT_FOUND", () => {
++  test("purgeFolder with a valid name but missing directory throws 404", async () => {
++    const DOCS_PATH = "/storage/documents";
++    const TARGET = "does-not-exist";
++
++    const fsMock = {
++      readdirSync: jest.fn((p) => {
++        if (p === DOCS_PATH) return [TARGET];
++        return [];
++      }),
++      lstatSync: jest.fn(() => ({ isDirectory: () => true, isSymbolicLink: () => false })),
++      existsSync: jest.fn(() => false), // ← folder missing
++      unlinkSync: jest.fn(),
++      rmdirSync: jest.fn(),
++    };
++
++    const stubs = {
++      ".": {
++        purgeVectorCache: jest.fn(),
++        purgeSourceDocument: jest.fn(),
++        normalizePath: (p) => p,
++        isWithin: () => true,
++        documentsPath: DOCS_PATH,
++      },
++      "../../models/documents": {
++        Document: { removeDocuments: jest.fn() },
++      },
++      "../../utils/prisma": mockPrisma,
++      fs: fsMock,
++    };
++
++    const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
++    await expect(purgeFolder(TARGET)).rejects.toMatchObject({
++      statusCode: 404,
++      code: "FOLDER_NOT_FOUND",
++      message: expect.stringMatching(/was not found/i),
++    });
++    expect(fsMock.unlinkSync).not.toHaveBeenCalled();
++    expect(fsMock.rmdirSync).not.toHaveBeenCalled();
++  });
++});
++
++// ---------------------------------------------------------------------------
++// Scenario 5d — purgeFolder: path traversal throws 400
++// ---------------------------------------------------------------------------
++describe("Scenario 5d — purgeFolder: path traversal throws 400 FOLDER_OUTSIDE_DOCUMENTS", () => {
++  test("purgeFolder with a traversal path throws FOLDER_OUTSIDE_DOCUMENTS", async () => {
++    const DOCS_PATH = "/storage/documents";
++    const TRAVERSAL = "../../../etc/passwd";
++
++    const fsMock = {
++      readdirSync: jest.fn(() => []),
++      lstatSync: jest.fn(() => ({ isDirectory: () => true, isSymbolicLink: () => false })),
++      existsSync: jest.fn(() => true),
++      unlinkSync: jest.fn(),
++      rmdirSync: jest.fn(),
++    };
++
++    const stubs = {
++      ".": {
++        purgeVectorCache: jest.fn(),
++        purgeSourceDocument: jest.fn(),
++        normalizePath: (p) => p, // normalizePath passes through for this test
++        isWithin: (base, target) => target.startsWith(base), // real logic
++        documentsPath: DOCS_PATH,
++      },
++      "../../models/documents": {
++        Document: { removeDocuments: jest.fn() },
++      },
++      "../../utils/prisma": mockPrisma,
++      fs: fsMock,
++    };
++
++    const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
++    await expect(purgeFolder(TRAVERSAL)).rejects.toMatchObject({
++      statusCode: 400,
++      code: "FOLDER_OUTSIDE_DOCUMENTS",
++      message: expect.stringMatching(/outside the documents/i),
++    });
++    expect(fsMock.unlinkSync).not.toHaveBeenCalled();
++    expect(fsMock.rmdirSync).not.toHaveBeenCalled();
++  });
++});
+
+================================================================================
+SECTION 4 — Scenario 6: nested subdirectory (lines 400-467)
+================================================================================
+
+@@ -400,7 +400,7 @@
+ describe("Scenario 6 — purgeFolder: nested subdirectory aborts operation", () => {
+-  test("purgeFolder aborts and does NOT delete folder when a subdir is present", async () => {
++  test("purgeFolder throws FOLDER_UNEXPECTED_ENTRIES 400 when a subdir is present", async () => {
+     const DOCS_PATH = "/storage/documents";
+     const TARGET = "user-uploads";
+
+@@ -430,9 +430,8 @@
+       rmdirSync: jest.fn(),
+     };
+
+-    const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+-
+     const stubs = {
+       ".": {
+         purgeVectorCache: jest.fn().mockResolvedValue(undefined),
+@@ -452,18 +451,18 @@
+     const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
+
+-    await purgeFolder(TARGET);
+-
+-    // No files deleted, no directory removed.
++    // purgeFolder must reject — no silent return allowed.
++    await expect(purgeFolder(TARGET)).rejects.toMatchObject({
++      statusCode: 400,
++      code: "FOLDER_UNEXPECTED_ENTRIES",
++      message: expect.stringMatching(/nested-dir/),
++    });
++    // No files deleted, no directory removed.
+     expect(fsMock.unlinkSync).not.toHaveBeenCalled();
+     expect(fsMock.rmdirSync).not.toHaveBeenCalled();
+-
+-    // An error log mentioning the unexpected entry should have been emitted.
+-    const errorLog = consoleSpy.mock.calls.flat().join(" ");
+-    expect(errorLog).toMatch(/nested-dir/);
+-    expect(errorLog).toMatch(/Aborting/i);
+-
+-    consoleSpy.mockRestore();
+   });
+ });
+
+================================================================================
+SECTION 5 — Scenario 7: symbolic link (lines 472-536)
+================================================================================
+
+@@ -472,7 +472,7 @@
+ describe("Scenario 7 — purgeFolder: symbolic link entry aborts operation", () => {
+-  test("purgeFolder aborts and does NOT delete folder when a symlink is present", async () => {
++  test("purgeFolder throws FOLDER_UNEXPECTED_ENTRIES 400 when a symlink is present", async () => {
+     const DOCS_PATH = "/storage/documents";
+     const TARGET = "user-uploads";
+
+@@ -501,9 +501,8 @@
+       rmdirSync: jest.fn(),
+     };
+
+-    const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+-
+     const stubs = {
+       ".": {
+@@ -521,14 +520,14 @@
+     const { purgeFolder } = loadCandidateModule(CANDIDATE_PURGE, stubs);
+
+-    await purgeFolder(TARGET);
+-
++    // purgeFolder must reject — no silent return allowed.
++    await expect(purgeFolder(TARGET)).rejects.toMatchObject({
++      statusCode: 400,
++      code: "FOLDER_UNEXPECTED_ENTRIES",
++      message: expect.stringMatching(/link-to-secret/),
++    });
+     expect(fsMock.unlinkSync).not.toHaveBeenCalled();
+     expect(fsMock.rmdirSync).not.toHaveBeenCalled();
+-
+-    const errorLog = consoleSpy.mock.calls.flat().join(" ");
+-    expect(errorLog).toMatch(/link-to-secret/);
+-    expect(errorLog).toMatch(/Aborting/i);
+-
+-    consoleSpy.mockRestore();
+   });
+ });
