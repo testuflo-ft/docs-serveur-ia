@@ -1,8 +1,8 @@
-# PUR-02 — Livraison candidat correctif (v4e)
-**Date** : 2026-11-03  
+# PUR-02 — Livraison candidat correctif (v4e + fix#1b)
+**Date** : 2026-11-04 (révisé après contre-revue indépendante)  
 **Version AnythingLLM cible** : v1.19.0  
-**Statut** : CANDIDAT v4e — non déployé, à valider avant intégration en production  
-**Révision** : v4 + PUR-02-E (retour `undefined` → HTTP 200 silencieux corrigé) — 38 / 38 PASS
+**Statut** : CANDIDAT v4e + fix#1b — non déployé, à valider avant intégration en production  
+**Révision** : v4e + correctif traversal-to-existing-target (D-2) — **52 / 52 PASS**
 
 ---
 
@@ -12,9 +12,10 @@
 |---|---|---|
 | `candidate-lance-index.js` | `server/utils/vectorDbProviders/lance/index.js` | Fournisseur LanceDB |
 | `candidate-documents.js` | `server/models/documents.js` | Modèle Document |
-| `candidate-purgeDocument.js` ← **v4e** | `server/utils/files/purgeDocument.js` | Utilitaires de purge |
-| `pur02-candidate.test.js` ← **v4e** | *(nouveau)* `server/__tests__/pur02-candidate.test.js` | Tests unitaires isolés (22 scénarios) |
-| `pur02-http-handler.test.js` ← **nouveau v4e** | *(nouveau)* `server/__tests__/pur02-http-handler.test.js` | Tests handlers HTTP réels (16 scénarios) |
+| `candidate-purgeDocument-v4e.js` ← **v4e+fix#1b** | `server/utils/files/purgeDocument.js` | Utilitaires de purge |
+| `pur02-candidate.test.js` ← **v4e+fix#1b** | *(nouveau)* `server/__tests__/pur02-candidate.test.js` | Tests unitaires isolés — Suite A (22 scénarios) |
+| `pur02-http-handler.test.js` ← **v4e** | *(nouveau)* `server/__tests__/pur02-http-handler.test.js` | Tests handlers HTTP réels — Suite B (16 scénarios) |
+| `pur02-path-security.test.js` ← **nouveau** | *(nouveau)* `server/__tests__/pur02-path-security.test.js` | Tests sécurité chemins (real normalizePath/isWithin) — Suite C (14 scénarios) |
 
 Patch unifié :
 
@@ -33,13 +34,25 @@ c826f004f1761c20b1e06300fc0f8d63416e03abe523b7e06a0259ec23180e44  candidate-lanc
 de9c586043cbf63f70c4070cc18bc2f0871bc3a8b1d8caa79f32248fba8152eb  candidate-documents.js
 ```
 
-### v4e — fichiers modifiés ou nouveaux (2026-11-03)
+### v4e + fix#1b — fichiers modifiés ou nouveaux (2026-11-04)
 
 ```
-95c06dcfa48f0ed7109496b1a37ef5c4e1de6acfa842aadb7de5ac40a73d8134  candidate-purgeDocument.js  (v4e)
+90a21b0488dfd78ee744b35ae02cd9a6b1e629ead17a88cec5bda49ae4875f79  candidate-purgeDocument-v4e.js  (v4e + fix#1b)
+b261a32f718ff8a27bea2133ccc4c4c836a150afc39d1f8cd30488a0e9040bfa  pur02-candidate.test.js         (Suite A — 22 scénarios, v4e + fix#1b)
+cb9702bdddcadd126487f1e5e5397075cb7a4a2a7b5144c93285819a694eff55  pur02-http-handler.test.js      (Suite B — 16 scénarios, v4e)
+89e32abc8c171b0aa7ad14cc90d49b614534e249c3e64f85d2fbabc6712d7921  pur02-path-security.test.js     (Suite C — 14 scénarios, nouveau)
+```
+
+> **Cohérence** : les deux copies du candidat (test-run-v4e/ et patch-work/) ont le même SHA-256 `90a21b04…`, confirmant l'identité des fichiers.
+
+### v4e (2026-11-03) — empreintes historiques supersédées par fix#1b
+
+> Ces empreintes correspondent à la version v4e avant correction D-2. Elles sont conservées à titre historique.
+
+```
+95c06dcfa48f0ed7109496b1a37ef5c4e1de6acfa842aadb7de5ac40a73d8134  candidate-purgeDocument.js  (v4e, pré-fix#1b)
 0e64ff36402615076553d06cf69a84a6e433f00fd405ff0682eb8c4446e03f93  PUR-02-E-purgeDocument.patch
-c786f4e4d650d580ffe6b57b8cdf72ea05039e5b1d73f4436678e8312870dc25  pur02-candidate.test.js     (v4e — 22 scénarios)
-cb9702bdddcadd126487f1e5e5397075cb7a4a2a7b5144c93285819a694eff55  pur02-http-handler.test.js  (nouveau v4e — 16 scénarios)
+c786f4e4d650d580ffe6b57b8cdf72ea05039e5b1d73f4436678e8312870dc25  pur02-candidate.test.js     (pré-fix#1b, 22 scénarios)
 ```
 
 Références v1.19.0 (copies de laboratoire PUR-02-lab-20261029-191346, SHA vérifiés identiques à l'officiel) :
@@ -61,7 +74,7 @@ f6dda7152e476a6078533a8c06f458204d36c2abd550b08bbf69c8ccf232727a  ref-purgeDocum
 | `node --check` sur le fichier de tests | ✓ |
 | Jest 29 — 17 scénarios unitaires (v4) | **17 / 17 PASS** |
 
-### v4e (2026-11-03) — résultats consolidés
+### v4e (2026-11-03) — résultats historiques (pré-fix#1b)
 
 | Contrôle | Résultat |
 |---|---|
@@ -69,9 +82,28 @@ f6dda7152e476a6078533a8c06f458204d36c2abd550b08bbf69c8ccf232727a  ref-purgeDocum
 | `node --check` sur les deux fichiers de tests v4e | ✓ |
 | Jest 29 — Suite A : `pur02-candidate.test.js` — 22 scénarios unitaires | **22 / 22 PASS** |
 | Jest 29 — Suite B : `pur02-http-handler.test.js` — 16 scénarios handlers HTTP | **16 / 16 PASS** |
-| **Total v4e** | **38 / 38 PASS** |
+| **Total v4e pré-fix#1b** | **38 / 38 PASS** |
 
-Sortie Jest — Suite A — `pur02-candidate.test.js` (v4e — 22 scénarios) :
+### v4e + fix#1b (2026-11-04) — résultats consolidés après contre-revue
+
+| Contrôle | Résultat |
+|---|---|
+| `node --check` sur `candidate-purgeDocument-v4e.js` (fix#1b) | ✓ Aucune erreur de syntaxe |
+| `node --check` sur les trois fichiers de tests | ✓ |
+| Jest 29 — Suite A : `pur02-candidate.test.js` — 22 scénarios unitaires | **22 / 22 PASS** |
+| Jest 29 — Suite B : `pur02-http-handler.test.js` — 16 scénarios handlers HTTP | **16 / 16 PASS** |
+| Jest 29 — Suite C : `pur02-path-security.test.js` — 14 scénarios sécurité chemins | **14 / 14 PASS** |
+| **Total v4e + fix#1b** | **52 / 52 PASS** |
+
+Sortie Jest complète (2026-11-04) :
+```
+Test Suites: 3 passed, 3 total
+Tests:       52 passed, 52 total
+Snapshots:   0 total
+Time:        0.707 s
+```
+
+Sortie Jest — Suite A — `pur02-candidate.test.js` (v4e + fix#1b — 22 scénarios) :
 ```
 PASS server/__tests__/pur02-candidate.test.js
   ✓ Scenario 1 — absent document silently skipped
@@ -81,7 +113,7 @@ PASS server/__tests__/pur02-candidate.test.js
   ✓ Scenario 5 — custom-documents folder rejected
   ✓ Scenario 5b — null/empty/whitespace folder name → 400 FOLDER_NAME_REQUIRED
   ✓ Scenario 5c — non-existent folder → 404 FOLDER_NOT_FOUND
-  ✓ Scenario 5d — path traversal → 400 FOLDER_OUTSIDE_DOCUMENTS
+  ✓ Scenario 5d — path traversal throws FOLDER_NAME_INVALID before any filesystem access
   ✓ Scenario 6 — nested subdirectory aborts operation
   ✓ Scenario 7 — symbolic link entry aborts operation
   ✓ Scenario 8 — cleanup failure preserves source file
@@ -124,7 +156,41 @@ PASS server/__tests__/pur02-http-handler.test.js
 Tests: 16 passed, 16 total
 ```
 
+Sortie Jest — Suite C — `pur02-path-security.test.js` (nouveau — 14 scénarios) :
+```
+PASS server/__tests__/pur02-path-security.test.js
+  Suite C — Path security with REAL normalizePath and isWithin
+  ✓ C-01: '../secret' → fix #1b catches separator → FOLDER_NAME_INVALID, no fs access
+  ✓ C-02: '../../etc/passwd' → fix #1b catches separator → FOLDER_NAME_INVALID
+  ✓ C-03: '..' → fix #1b catches '..' equality → FOLDER_NAME_INVALID
+  ✓ C-04: '/etc/passwd' → fix #1b catches separator → FOLDER_NAME_INVALID
+  ✓ C-05: '.' → fix #1b catches '.' equality → FOLDER_NAME_INVALID 400 (O-1 fixed)
+  ✓ C-06: 'custom-documents' → validRemovableSubFolders excludes it → FOLDER_PROTECTED
+  ✓ C-07: 'valid-folder' → control case → success with real path functions
+  ✓ C-08: null → FOLDER_NAME_REQUIRED (before path functions are invoked)
+  ✓ C-09: top-level symlink → excluded from allowlist → FOLDER_PROTECTED
+  ✓ C-10: '..\\secret' → fix #1b catches backslash → FOLDER_NAME_INVALID
+  ✓ C-11: '../secret' with documents/secret existing → FOLDER_NAME_INVALID, no purge ops triggered
+  ✓ C-12: '../../secret' with documents/secret existing → FOLDER_NAME_INVALID, no purge ops triggered
+  ✓ C-13: '..\\secret' with documents/secret existing → FOLDER_NAME_INVALID, no purge ops triggered
+  ✓ C-14: absolute path '/stub/documents/secret' with target existing → FOLDER_NAME_INVALID, no purge ops
+Tests: 14 passed, 14 total
+```
+
 > **Note** : Les `console.error` visibles pendant les tests d'erreur sont produits par le bloc `catch` du code de production réel — comportement attendu confirmant que le vrai code s'exécute. Ce ne sont pas des échecs de test.
+
+### Commandes de reproduction
+
+```bash
+# Dans scratchpad/test-run-v4e/
+cd scratchpad/test-run-v4e
+npx jest --no-coverage
+# → 52 passed, 3 suites
+
+# Vérification empreintes
+sha256sum candidate-purgeDocument-v4e.js pur02-candidate.test.js \
+           pur02-http-handler.test.js pur02-path-security.test.js
+```
 
 ---
 
@@ -138,7 +204,7 @@ Tests: 16 passed, 16 total
 - **Défaut** : `get()` absorbe les erreurs SQL et retourne `null`, traité comme "document absent".
 - **Correctif** : nouvelle méthode `_getStrict()` sans try/catch. `removeDocuments()` utilise `_getStrict()` ; si LanceDB échoue → abort avant SQL (enregistrement préservé pour retry) ; les deux suppressions SQL regroupées dans `prisma.$transaction([...])` pour atomicité SQL-SQL ; si la transaction échoue après LanceDB → log explicite "orphaned rows" + propagation.
 
-### 4.3 `candidate-purgeDocument.js` — `purgeDocument()` et `purgeFolder()`
+### 4.3 `candidate-purgeDocument-v4e.js` — `purgeDocument()` et `purgeFolder()`
 - **Défaut `purgeDocument`** : utilisait `Workspace.where()` qui absorbe les erreurs → SQL failure silencieusement traité comme "aucun workspace" ; fichier source supprimé AVANT le nettoyage des associations.
 - **Correctif** : `_getWorkspacesStrict()` avec `prisma.workspaces.findMany()` direct ; ordre inversé — associations en premier, source supprimée seulement après succès complet.
 - **Défaut `purgeFolder`** : même problème `Workspace.where()` ; `rmSync({recursive:true})` même en cas d'échec partiel ; pas de vérification des liens symboliques ni des sous-répertoires ; `purgeVectorCache` appelé avant `removeDocuments`.
@@ -186,7 +252,7 @@ Corrections dans les tests (v1 → v2) :
 
 Défaut PUR-02-E identifié lors de la revue des tests HTTP : `purgeFolder()` retournait `undefined` (pas de `return` explicite sur le chemin succès) → les deux handlers HTTP renvoyaient un HTTP 200 avec un corps `null` ou vide, annonçant un succès sans confirmation.
 
-| # | Problème identifié | Correction appliquée dans `candidate-purgeDocument.js` |
+| # | Problème identifié | Correction appliquée dans `candidate-purgeDocument-v4e.js` |
 |---|---|---|
 | C14 | `purgeFolder()` ne validait pas le nom du dossier : appels avec `undefined`/`null`/chaîne vide passaient silencieusement | Validation préalable : `if (!folderName \|\| …)` → `throw folderError(400, "FOLDER_NAME_REQUIRED", …)` |
 | C15 | Aucun contrôle de traversal de chemin ni de dossier protégé (`custom-documents`) dans `purgeFolder()` | Ajout de `normalizePath(folderName)` + vérification que le chemin résolu reste sous `DOCUMENTS_ROOT` → `throw folderError(400, "FOLDER_OUTSIDE_DOCUMENTS", …)` ; vérification dossier protégé → `throw folderError(403, "FOLDER_PROTECTED", …)` ; dossier absent → `throw folderError(404, "FOLDER_NOT_FOUND", …)` |
@@ -213,7 +279,63 @@ Vérification des autres appelants de `purgeFolder()` :
 
 ---
 
-## 6. Limites résiduelles connues
+## 6. Corrections post-contre-revue indépendante (v4e → v4e + fix#1b, 2026-11-04)
+
+Deux points soulevés par la contre-revue indépendante (ChatGPT, transmis le 2026-11-04).
+
+### Point 1 — Défaut D-2 : traversal vers cible existante (BLOQUANT, corrigé)
+
+**Scénario** : `normalizePath("../secret")` strip le préfixe `../` et retourne `"secret"`. Si `documents/secret` existe ET est dans `validRemovableSubFolders`, la purge est déclenchée — aucune erreur. Pas d'échappement de chemin (isWithin aurait bloqué), mais une confusion sémantique destructive : l'entrée `../secret` provoque la suppression du dossier `secret`.
+
+**Analyse complète du chemin de code (sans fix)** :
+1. `normalizePath("../secret")` → `"secret"` (regex strip `../`)
+2. `subFolderPath = path.resolve(DOCS, "secret")` = `DOCS/secret`
+3. `isWithin(DOCS, DOCS/secret)` → `true`
+4. `existsSync(DOCS/secret)` → `true` (cible présente)
+5. `validRemovableSubFolders.includes("secret")` → `true`
+6. Purge déclenchée → fichiers supprimés, `rmdirSync` exécuté ✗
+
+**Fix appliqué (fix#1b)** : vérification pré-normalisée dans `purgeFolder()`, avant tout appel à `normalizePath` ou toute opération filesystem. Rejette tout `folderName` contenant `/` ou `\` ou égal à `".."` ou `"."`. Nouveau code d'erreur : `FOLDER_NAME_INVALID` (400).
+
+```javascript
+const trimmedFolderName = folderName.trim();
+if (
+  /[/\\]/.test(trimmedFolderName) ||
+  trimmedFolderName === ".." ||
+  trimmedFolderName === "."
+) {
+  throw folderError(
+    400,
+    "FOLDER_NAME_INVALID",
+    `[purgeFolder] "${trimmedFolderName}" is not a valid top-level folder name \
+(contains path separators or traversal sequences).`
+  );
+}
+```
+
+**Effet de bord positif** : corrige également O-1 (`"."` → 400 clair au lieu de 500 non typé).
+
+**Tests de régression** (Suite A, Scénario 5d mis à jour ; Suite C, C-01 à C-05, C-10 à C-14) :
+- C-11 : `"../secret"` avec `documents/secret` existant → `FOLDER_NAME_INVALID`, aucune opération destructive
+- C-12 : `"../../secret"` avec `documents/secret` existant → idem
+- C-13 : `"..\\secret"` (backslash) avec cible existante → idem
+- C-14 : `"/stub/documents/secret"` (chemin absolu) avec cible existante → idem
+- Tous confirment : `readdirSync`, `unlinkSync`, `rmdirSync`, `purgeVectorCache`, `removeDocuments` **non appelés**.
+
+### Point 2 — Cohérence des livrables et des empreintes (résolu)
+
+**Problème identifié** : rapport d'audit montrait SHA `737ed35d…` ; fiche de livraison montrait `95c06dcf…` et 38/38. Incohérence due à des versions différentes du candidat entre les deux documents.
+
+**Résolution** :
+- Fix#1b appliqué → nouveau SHA candidat : `90a21b04…`
+- Suite C créée (14 scénarios) → SHA `89e32abc…`
+- Suite A mise à jour (CANDIDATE_PURGE → v4e, Scénario 5d → FOLDER_NAME_INVALID) → SHA `b261a32f…`
+- **Total normalisé : 52 / 52 PASS** (22 Suite A + 16 Suite B + 14 Suite C)
+- Toutes les empreintes dans cette fiche de livraison correspondent aux fichiers du run 2026-11-04.
+
+---
+
+## 7. Limites résiduelles connues
 
 ### L-1 — Non-atomicité Prisma / LanceDB (non résolu, documenté)
 Prisma (SQLite) et LanceDB n'ont pas de transaction partagée. Deux scénarios de défaillance partielle subsistent :
@@ -242,9 +364,14 @@ Les tests handlers (`pur02-http-handler.test.js`) exécutent les vrais fichiers 
 
 La variable d'environnement `process.env.STORAGE_DIR` doit être définie avant le chargement du module `api-document-index.js` (ligne 23 évalue `path.resolve(STORAGE_DIR, 'documents')` au chargement). Le fichier de tests fixe `STORAGE_DIR=/tmp/stub-storage` en en-tête pour éviter l'erreur `TypeError: The "paths[0]" argument must be of type string`.
 
+### ~~O-1 — `purgeFolder(".")` → HTTP 500~~ (RÉSOLU par fix#1b)
+~~`normalizePath(".")` lève `Error("Invalid path.")` sans `statusCode` → handler HTTP mappe vers 500. Comportement non typé, différent des autres rejets de validation (400).~~
+
+**O-1 résolu** : fix#1b intercepte `"."` avant normalizePath → `FOLDER_NAME_INVALID` (400). Vérifié par C-05.
+
 ---
 
-## 7. Procédure de déploiement recommandée (hors périmètre de cette livraison)
+## 8. Procédure de déploiement recommandée (hors périmètre de cette livraison)
 
 1. Valider les diffs manuellement (fichiers `.diff` joints)
 2. Copier les 3 candidats sur les copies de laboratoire déjà vérifiées

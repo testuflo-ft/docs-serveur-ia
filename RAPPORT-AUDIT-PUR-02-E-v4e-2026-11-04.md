@@ -364,3 +364,170 @@ Deux défauts ouverts non bloquants pour un essai isolé :
 ---
 
 *Rapport produit dans un environnement cloud isolé — aucune intervention sur la production, aucune donnée réelle du NAS.*
+
+---
+
+## ADDENDUM — Réponse à la contre-revue indépendante (2026-11-04)
+
+La contre-revue indépendante (ChatGPT, transmise le 2026-11-04) a soulevé deux points. Les deux sont traités ci-dessous. Le rapport original (§1–§11) est conservé intégralement comme historique ; cet addendum le corrige et le complète.
+
+---
+
+### A.1 — Point 1 : Traversal vers cible existante (défaut D-2, BLOQUANT — CORRIGÉ)
+
+#### Scénario exact identifié par la contre-revue
+
+> Suite C teste `../secret` bloqué **parce que** `documents/secret` n'existe pas. Question : que se passe-t-il si `documents/secret` existe ET est dans l'allowlist ?
+
+#### Analyse confirmée (chemin de code sans fix#1b)
+
+Le scénario est un défaut réel. Voici le chemin de code complet pour l'entrée `"../secret"` quand `documents/secret` existe et est removable :
+
+| Étape | Code | Résultat |
+|---|---|---|
+| 1 | `normalizePath("../secret")` | → `"secret"` (regex strip `../`) |
+| 2 | `subFolderPath = path.resolve(DOCS, "secret")` | → `DOCS/secret` |
+| 3 | `isWithin(DOCS, DOCS/secret)` | → `true` (pas d'échappement) |
+| 4 | `existsSync(DOCS/secret)` | → `true` (cible présente) |
+| 5 | `validRemovableSubFolders.includes("secret")` | → `true` |
+| 6 | Purge déclenchée | fichiers supprimés + `rmdirSync` ✗ |
+
+Ce n'est pas une fuite de chemin (isWithin aurait bloqué un vrai échappement), mais une **confusion sémantique destructive** : une entrée contenant une séquence de traversal déclenche la suppression du dossier légitime `secret`. Le contrat de l'API est qu'un nom de dossier doit être un identifiant de premier niveau, pas une expression de chemin. Toute entrée contenant `/` ou `\` ou égale à `".."` ou `"."` viole ce contrat.
+
+#### Correction appliquée — fix#1b
+
+Ajout d'une vérification **pré-normalisée** dans `purgeFolder()`, avant tout appel à `normalizePath` ou toute opération filesystem :
+
+```javascript
+// PUR-02-E fix #1b: reject path separators and traversal sequences before
+// normalizePath can silently transform them into valid-looking folder names.
+const trimmedFolderName = folderName.trim();
+if (
+  /[/\\]/.test(trimmedFolderName) ||
+  trimmedFolderName === ".." ||
+  trimmedFolderName === "."
+) {
+  throw folderError(
+    400,
+    "FOLDER_NAME_INVALID",
+    `[purgeFolder] "${trimmedFolderName}" is not a valid top-level folder name \
+(contains path separators or traversal sequences).`
+  );
+}
+```
+
+Nouveau code d'erreur : `FOLDER_NAME_INVALID` (400). Le fix intercepte l'entrée avant que `normalizePath`, `isWithin`, `readdirSync`, `existsSync`, `unlinkSync`, `rmdirSync`, `purgeVectorCache` ou `removeDocuments` ne soient jamais appelés.
+
+**Effet de bord positif** : corrige également O-1. L'entrée `"."` retournait un HTTP 500 non typé (exception `normalizePath` sans `statusCode`). Elle reçoit maintenant `FOLDER_NAME_INVALID` (400). O-1 est **fermé**.
+
+#### Mise à jour du tableau §4.2 (comportement avec fix#1b actif)
+
+| Entrée | fix#1b | Résultat final |
+|---|---|---|
+| `"../secret"` | `/` détecté → rejeté | **FOLDER_NAME_INVALID (400)** — aucun accès fs |
+| `"../../etc/passwd"` | `/` détecté → rejeté | **FOLDER_NAME_INVALID (400)** — aucun accès fs |
+| `".."` | `".."` égalité → rejeté | **FOLDER_NAME_INVALID (400)** — aucun accès fs |
+| `"/etc/passwd"` | `/` détecté → rejeté | **FOLDER_NAME_INVALID (400)** — aucun accès fs |
+| `"."` | `"."` égalité → rejeté | **FOLDER_NAME_INVALID (400)** — aucun accès fs (**O-1 résolu**) |
+| `"..\\secret"` | `\` détecté → rejeté | **FOLDER_NAME_INVALID (400)** — aucun accès fs |
+
+#### Mise à jour du tableau §4.4 — nouvelle ligne D-2
+
+**D-2 — Traversal silencieux vers cible existante (CORRIGÉ)**
+
+**Sévérité :** Haute (risque de suppression non intentionnelle d'un dossier légitime)  
+**Description :** `normalizePath("../secret")` retourne `"secret"`. Si `documents/secret` est un dossier removable, l'entrée traversal déclenche sa suppression sans erreur.  
+**Correction (fix#1b) :** Vérification pré-normalisée rejettant tout nom contenant `/` ou `\` ou égal à `".."` ou `"."`. Code `FOLDER_NAME_INVALID` (400). Appliqué dans les deux copies du candidat.
+
+---
+
+### A.2 — Point 2 : Cohérence des livrables et des empreintes (RÉSOLU)
+
+#### Incohérence signalée
+
+Le rapport original (§3) montrait le SHA `737ed35d…` pour le candidat. La fiche de livraison montrait `95c06dcf…` et 38/38 tests. Ces divergences correspondaient à des états intermédiaires du candidat entre les deux documents.
+
+#### Résolution
+
+Fix#1b a été appliqué au candidat → nouveau SHA unique et cohérent pour les deux copies. Suite A mise à jour (CANDIDATE_PURGE corrigé vers v4e, Scénario 5d → FOLDER_NAME_INVALID). Suite C étendue de 10 à 14 tests (C-11 à C-14 : scénarios traversal vers cibles existantes). Total normalisé : 52/52.
+
+#### Tableau §3.1 mis à jour
+
+| Fichier | Rôle | SHA-256 (après fix#1b) |
+|---|---|---|
+| `candidate-purgeDocument-v4e.js` (test-run-v4e/) | Candidat — testé | `90a21b0488dfd78ee744b35ae02cd9a6b1e629ead17a88cec5bda49ae4875f79` |
+| `candidate-purgeDocument-v4e.js` (patch-work/) | Canonique | `90a21b0488dfd78ee744b35ae02cd9a6b1e629ead17a88cec5bda49ae4875f79` (**identique**) |
+
+> Les deux copies partagent le même SHA-256 — cohérence confirmée.
+
+#### Tableau §3.3 mis à jour
+
+| Fichier | Rôle | SHA-256 (après fix#1b) |
+|---|---|---|
+| `pur02-candidate.test.js` | Suite A — 22 tests unitaires | `b261a32f718ff8a27bea2133ccc4c4c836a150afc39d1f8cd30488a0e9040bfa` |
+| `pur02-http-handler.test.js` | Suite B — 16 tests handler réel | `cb9702bdddcadd126487f1e5e5397075cb7a4a2a7b5144c93285819a694eff55` *(inchangé)* |
+| `pur02-path-security.test.js` | Suite C — 14 tests sécurité chemins | `89e32abc8c171b0aa7ad14cc90d49b614534e249c3e64f85d2fbabc6712d7921` |
+
+---
+
+### A.3 — Résultats de tests mis à jour (52/52)
+
+```
+Test Suites: 3 passed, 3 total
+Tests:       52 passed, 52 total  (était 48/48 dans le rapport original)
+  Suite A (pur02-candidate.test.js)      : 22/22 PASS
+  Suite B (pur02-http-handler.test.js)   : 16/16 PASS
+  Suite C (pur02-path-security.test.js)  : 14/14 PASS  (était 10/10)
+```
+
+Nouveaux tests Suite C (C-11 à C-14) — scénarios traversal vers cibles existantes :
+
+```
+PASS  C-11: '../secret' avec documents/secret existant → FOLDER_NAME_INVALID, aucune op destructive
+PASS  C-12: '../../secret' avec documents/secret existant → FOLDER_NAME_INVALID, aucune op destructive
+PASS  C-13: '..\\secret' avec documents/secret existant → FOLDER_NAME_INVALID, aucune op destructive
+PASS  C-14: '/stub/documents/secret' avec cible existante → FOLDER_NAME_INVALID, aucune op destructive
+```
+
+Chaque test vérifie explicitement : `readdirSync`, `unlinkSync`, `rmdirSync`, `purgeVectorCache`, `removeDocuments` **non appelés**.
+
+Mise à jour du tableau §10 (qualification) :
+
+| Suite | Qualification | Mise à jour |
+|---|---|---|
+| **A** (22 tests) | Tests unitaires — logique fonctionnelle | CANDIDATE_PURGE corrigé → v4e ; Scénario 5d → FOLDER_NAME_INVALID |
+| **B** (16 tests) | Tests contrat d'erreur sur handler réel | Inchangé |
+| **C** (14 tests) | Tests sécurité chemins avec vraies fonctions | Étendu de 10 → 14 : C-11 à C-14 ajoutés |
+
+---
+
+### A.4 — Mise à jour des défauts ouverts
+
+**O-1 — FERMÉ.** Fix#1b intercèpte `"."` avant normalizePath → `FOLDER_NAME_INVALID` (400). Vérifié par C-05.
+
+**O-2 et O-3** (normalizePath chemins absolus, isWithin symlinks) : inchangés — défenses correctes, comportements hérités AnythingLLM 1.19.0.
+
+---
+
+### A.5 — Verdict révisé
+
+**Les deux points de la contre-revue sont traités.**
+
+**Point 1 — Défaut D-2 (traversal vers cible existante) :**
+- Défaut confirmé comme réel par analyse de code.
+- Fix#1b appliqué : vérification pré-normalisée rejette toute entrée contenant `/`, `\`, `".."` ou `"."` avant tout accès filesystem.
+- Quatre tests de régression spécifiques (C-11 à C-14) vérifient que le scénario exact de la contre-revue est bloqué, et qu'aucune opération destructive n'est déclenchée.
+- Effet de bord : O-1 résolu.
+
+**Point 2 — Cohérence des empreintes :**
+- Un SHA unique `90a21b04…` couvre les deux copies du candidat.
+- Toutes les empreintes de la fiche de livraison correspondent au run 2026-11-04.
+- Total normalisé : 52/52.
+
+**Verdict final : PRÊT pour essai isolé**, sous réserve de validation Florian.
+
+Les contraintes restent inchangées : aucune fusion, aucun déploiement, aucune publication, aucune modification du Plan ni du Journal, aucune opération destructive.
+
+---
+
+*Addendum produit dans le même environnement cloud isolé — aucune intervention sur la production.*
