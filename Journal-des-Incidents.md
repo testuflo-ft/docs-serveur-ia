@@ -438,7 +438,7 @@ Option A : passerelle dédiée. La clé Developer API générale ne sera pas tra
 ## ALLM-05 — La fonction purgeDocument a une portée globale
 
 **Date :** 12-13 octobre 2026 ; revu le 25 octobre 2026  
-**Statut :** ⚠️ Portée destructive globale confirmée dans le code ; pas de vulnérabilité autonome démontrée ; aucun incident de suppression constaté. Fiabilité améliorée par PUR-02 v4 (atomicité, propagation d'erreurs) — non déployé.
+**Statut :** ⚠️ Portée destructive globale confirmée dans le code ; pas de vulnérabilité autonome démontrée ; aucun incident de suppression constaté. Fiabilité améliorée par PUR-02 v4e + fix#1b (atomicité, propagation d'erreurs, validation FOLDER_NAME_INVALID) — candidat prêt pour essai isolé, non déployé.
 
 **Symptôme / risque :**
 Une future synchronisation NAS pourrait être tentée de supprimer les vecteurs d'un document lorsqu'un fichier source disparaît. Or, le helper `purgeDocument(filename)` n'est pas limité à un seul espace de travail.
@@ -1184,7 +1184,7 @@ Le comportement sous charge concurrente (écrasement ou mélange avant lecture p
 | `dumpENV()` écrit `/app/server/.env` dans le conteneur | [VAL] ; [C17] `updateENV.js` l.1537 ; [CM] l.1718 | Validé ; absence de bind mount à confirmer (SEC-10) |
 | Mise à jour d'AnythingLLM en 1.19.0 | Passation 25/10 [IMG] | Rapporté, non revérifié par Claude |
 | Changement de production du 27/10 : `DEPLOYMENT_VERSION` aligné sur 1.19.0 et ajout de la variable, un seul service recréé | [PROD] bilan 28/10 ; sauvegarde `backup-allm10-20261027-170318` | Rapporté, non revérifié ; effet fonctionnel de `DEPLOYMENT_VERSION` non examiné |
-| Correctifs de laboratoire INT-18 et INT-20/PUR-02 | [LAB] bilan 28/10 (mocks, `anythingllm-fixlab`) | Non validés, non déployés ; code non relu par Claude ; correctifs non exportés |
+| Correctifs de laboratoire INT-18 et INT-20/PUR-02 | [LAB] bilan 28/10 (mocks, `anythingllm-fixlab`) ; audit indépendant PUR-02-E v4e + fix#1b 2026-11-05 | INT-20/PUR-02 : candidat v4e + fix#1b, 52/52 tests (22A+16B+14C), patch `PUR-02-E-purgeDocument-v4e-fix1b.patch` SHA `86043b31…`, livré commit `d8b8581` — candidat prêt pour essai isolé, non déployé. INT-18 : non validé, non exporté. |
 
 **Règle de sécurité jusqu'à nouvel avis :** pas d'import n8n ni d'opérations d'administration via l'API sur les données réelles avant correction et validation dans un environnement isolé. Ne stocker aucun secret dans ce journal.
 
@@ -1213,7 +1213,7 @@ Le comportement sous charge concurrente (écrasement ou mélange avant lecture p
 | RAG-04 | Import | Échec d'embedding/indexation simulé | Échec explicite, pas de faux `success: true` ; comparer avec le comportement 1.19.0 (propagation de `embedded.success`) | À exécuter |
 | RAG-05 | Cohérence | Échec SQL après insertion LanceDB | Retour arrière des vecteurs tenté (code amont) ou état de réparation signalé ; contrôler SQL, `DocumentVectors` et LanceDB | À exécuter |
 | PUR-01 | Purge | Purge dossier factice avec sous-dossiers | Pas de référence résiduelle non signalée dans SQL, `DocumentVectors`, LanceDB ou cache | Partiel en laboratoire [LAB] : purge récursive, dossier supprimé après succès et conservé après erreur simulée, échec simulé de `Document.removeDocuments` propagé ; vraie panne LanceDB/SQL non testée |
-| PUR-02 | Contrat HTTP | `custom-documents`, dossier absent, chemin invalide/imbriqué | `protected`/`not_found`/`invalid` distincts ; aucun faux succès | Partiel en laboratoire [LAB] : 400 `INVALID_FOLDER_NAME` / `INVALID_FOLDER_PATH`, 403 `FOLDER_PROTECTED`, 404 `FOLDER_NOT_FOUND`, entrée symbolique rejetée (`UNSUPPORTED_FOLDER_ENTRY`) ; pas de test HTTP de bout en bout ; `partial_failure` non rapporté |
+| PUR-02 | Contrat HTTP | `custom-documents`, dossier absent, chemin invalide/imbriqué | `protected`/`not_found`/`invalid` distincts ; aucun faux succès | Candidat v4e + fix#1b, 52/52 tests PASS (22 unitaires, 16 HTTP handler, 14 sécurité chemins) [LAB] — codes vérifiés : 400 `FOLDER_NAME_REQUIRED`, 400 `FOLDER_NAME_INVALID`, 400 `FOLDER_OUTSIDE_DOCUMENTS`, 403 `FOLDER_PROTECTED`, 404 `FOLDER_NOT_FOUND`, 500 erreurs inattendues signalées. Prêt pour essai isolé, non déployé. |
 | OPS-01 | Sauvegarde | Sauvegarde puis restauration isolée (dont l'archive `storage-anythingllm.tar.gz` du 25/10) | Restauration fonctionnelle et intégrité vérifiée | À exécuter |
 | OPS-02 | Protection | Protection activée en isolé (valeur `1`, puis valeur `0` : la présence seule suffit-elle ?) ; suppression d'un workspace factice par les trois routes (`/admin/workspaces/:id`, `/workspace/:slug`, `/v1/workspace/:slug`) | 403 « Workspace deletion is blocked by the system administrator. » ; workspace préservé | Production : test unitaire du middleware PASS (403, `next()` non appelé) [PROD] ; test HTTP authentifié par route non fait ; laboratoire : à exécuter |
 | DOS-01 | Limite HTTP | Inspection statique de l'image de laboratoire pour `/api/embed` | Code réellement présent documenté ; présence seule ne prouve pas l'activité | Inspection statique de l'image active rapportée le 25/10 [IMG] ; à rejouer sur l'image de laboratoire |
