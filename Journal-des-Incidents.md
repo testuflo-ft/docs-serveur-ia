@@ -1,6 +1,6 @@
 # Journal des Incidents — Serveur IA Mac mini + Synology
 
-*Version 1.0 — 1er novembre 2026*
+*Version 1.2 — 5 novembre 2026*
 
 Format de chaque entrée :
 - **Symptôme** : ce qui a été observé
@@ -9,7 +9,7 @@ Format de chaque entrée :
 - **Test de validation**
 - **Précautions pour la prochaine fois**
 
-## Lecture de cette version (1.0)
+## Lecture de cette version (1.2)
 
 **Sources de preuve (légende utilisée dans ce document) :**
 - **[C17]** code amont, tag `v1.17.0` (commit `fa7ec877f005a21ede94888b3b8618b700343857`), relu en lecture seule le 25/10/2026.
@@ -1410,6 +1410,7 @@ Fichiers locaux, à publier manuellement par Florian après relecture (GIT-01 no
 ---
 
 *Dernière mise à jour : 5 novembre 2026*
+*Version 1.2 — 5 novembre 2026 : mise à jour PUR-02-E v4e + fix#1b. Candidat validé par 52/52 tests (22 Suite A + 16 Suite B + 14 Suite C), prêt pour essai isolé, non déployé. Patch SHA-256 : `86043b316bb40bbee3a9cc706d756255bbded05e278e3033ee018f14b1dbd8aa`. INT-18 reste non validé et non déployé. Base : v1.0.*
 *Version 1.1 : contre-revue indépendante v4e + fix#1b (2026-11-05) — défaut D-2 traité, Suite C étendue à 14 tests, total 52/52 PASS ; ALLM-16 statut, D6, historique rouvert/réévalué, section "Mise à jour 2026-11-05" et vérifications en attente mis à jour ; patch SHA actualisé (`86043b31…`). Base : v1.0 (1er nov 2026).*
 *Version 1.0 : intègre la validation PUR-02 v4 (9/9 tests d'intégration réels + 17/17 unitaires, consolidation v3 22/22) ; section "Mise à jour 01/11/2026" ajoutée ; ALLM-05 et ALLM-16 mis à jour ; ALLM-16 action recommandée complétée (PUR-02 v4) ; vérifications en attente ALLM-16 mise à jour ; D6 révisée ; historique rouvert/réévalué complété. Base : v0.9 (28 oct 2026).*
 *Version 0.9 : intègre le bilan ChatGPT du 28/10/2026 (étiquettes [PROD] et [LAB] ; ALLM-10 activé le 27/10 avec test unitaire seulement ; états de laboratoire INT-18 et INT-20/PUR-02 ; matrice : états partiels, 32 identifiants ; MISS-04 ; liste des vérifications en attente mise à jour). Base : v0.8 (25 oct 2026).*
