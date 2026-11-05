@@ -21,7 +21,7 @@ Patch unifié :
 
 | Fichier diff | Cible |
 |---|---|
-| `PUR-02-E-purgeDocument.patch` | `server/utils/files/purgeDocument.js` |
+| `PUR-02-E-purgeDocument-v4e-fix1b.patch` | `server/utils/files/purgeDocument.js` |
 
 ---
 
@@ -37,10 +37,11 @@ de9c586043cbf63f70c4070cc18bc2f0871bc3a8b1d8caa79f32248fba8152eb  candidate-docu
 ### v4e + fix#1b — fichiers modifiés ou nouveaux (2026-11-04)
 
 ```
-90a21b0488dfd78ee744b35ae02cd9a6b1e629ead17a88cec5bda49ae4875f79  candidate-purgeDocument-v4e.js  (v4e + fix#1b)
-b261a32f718ff8a27bea2133ccc4c4c836a150afc39d1f8cd30488a0e9040bfa  pur02-candidate.test.js         (Suite A — 22 scénarios, v4e + fix#1b)
-cb9702bdddcadd126487f1e5e5397075cb7a4a2a7b5144c93285819a694eff55  pur02-http-handler.test.js      (Suite B — 16 scénarios, v4e)
-89e32abc8c171b0aa7ad14cc90d49b614534e249c3e64f85d2fbabc6712d7921  pur02-path-security.test.js     (Suite C — 14 scénarios, nouveau)
+90a21b0488dfd78ee744b35ae02cd9a6b1e629ead17a88cec5bda49ae4875f79  candidate-purgeDocument-v4e.js          (v4e + fix#1b)
+86043b316bb40bbee3a9cc706d756255bbded05e278e3033ee018f14b1dbd8aa  PUR-02-E-purgeDocument-v4e-fix1b.patch  (patch unifié)
+f3e88f13165dc273749284c18750f9c745d8194a3f8e635664d18f24dbab8cbf  pur02-candidate.test.js                 (Suite A — 22 tests, v4e + fix#1b)
+cb9702bdddcadd126487f1e5e5397075cb7a4a2a7b5144c93285819a694eff55  pur02-http-handler.test.js              (Suite B — 16 scénarios, v4e)
+89e32abc8c171b0aa7ad14cc90d49b614534e249c3e64f85d2fbabc6712d7921  pur02-path-security.test.js             (Suite C — 14 scénarios, nouveau)
 ```
 
 > **Cohérence** : les deux copies du candidat (test-run-v4e/ et patch-work/) ont le même SHA-256 `90a21b04…`, confirmant l'identité des fichiers.
@@ -55,12 +56,22 @@ cb9702bdddcadd126487f1e5e5397075cb7a4a2a7b5144c93285819a694eff55  pur02-http-han
 c786f4e4d650d580ffe6b57b8cdf72ea05039e5b1d73f4436678e8312870dc25  pur02-candidate.test.js     (pré-fix#1b, 22 scénarios)
 ```
 
-Références v1.19.0 (copies de laboratoire PUR-02-lab-20261029-191346, SHA vérifiés identiques à l'officiel) :
+Références v1.19.0 (copies de laboratoire PUR-02-lab-20261029-191346) :
 ```
 5fb3092729447ba8501d1fc8d6f7072caebd390d1692e3dbe74dfbe365271470  ref-lance-index.js
 dde27671eb3f6379ee7e4bb5b2f693800b17316837f1317aa7bd6c4165a2076c  ref-documents.js
-f6dda7152e476a6078533a8c06f458204d36c2abd550b08bbf69c8ccf232727a  ref-purgeDocument.js
+f6dda7152e476a6078533a8c06f458204d36c2abd550b08bbf69c8ccf232727a  ref-purgeDocument.js      ← source du patch (non modifiée)
 ```
+
+Traçabilité des sources publiées (`pur02-sources-1.19.0/`) :
+```
+f6dda7152e476a6078533a8c06f458204d36c2abd550b08bbf69c8ccf232727a  purgeDocument.js      (source non patchée — base du diff)
+959ee973681994076402031a6d59d6eafd3cdb1b83589103f56f42f6115ff70f  files-index.js        (normalizePath, isWithin)
+0f7d5db7accd68c54a9ac0e884329a29a6e2f25b288c56030d3f24bb77142b19  endpoints-system.js   (route DELETE /system/remove-folder)
+b9c901945162631a685bff039e5df4b3ebc875c7408d93eab66217e5066ddb89  api-document-index.js (route DELETE /v1/document/remove-folder)
+```
+
+> **Note** : Le fichier extrait du conteneur de laboratoire (`PUR-02-lab-20261029-191346/purgeDocument.js`, SHA `0717505a…`) contenait déjà une modification intermédiaire ; il ne constitue **pas** la source de référence 1.19.0. La source correcte est `ref-purgeDocument.js` / `pur02-sources-1.19.0/purgeDocument.js` (`f6dda715…`), contre laquelle le patch s'applique et reconstruit exactement le candidat (`90a21b04…`).
 
 ---
 
@@ -72,7 +83,7 @@ f6dda7152e476a6078533a8c06f458204d36c2abd550b08bbf69c8ccf232727a  ref-purgeDocum
 |---|---|
 | `node --check` sur les 3 candidats | ✓ Aucune erreur de syntaxe |
 | `node --check` sur le fichier de tests | ✓ |
-| Jest 29 — 17 scénarios unitaires (v4) | **17 / 17 PASS** |
+| Jest 30.5.2 — 17 scénarios unitaires (v4) | **17 / 17 PASS** |
 
 ### v4e (2026-11-03) — résultats historiques (pré-fix#1b)
 
@@ -80,8 +91,8 @@ f6dda7152e476a6078533a8c06f458204d36c2abd550b08bbf69c8ccf232727a  ref-purgeDocum
 |---|---|
 | `node --check` sur les 3 candidats (dont `candidate-purgeDocument.js` v4e) | ✓ Aucune erreur de syntaxe |
 | `node --check` sur les deux fichiers de tests v4e | ✓ |
-| Jest 29 — Suite A : `pur02-candidate.test.js` — 22 scénarios unitaires | **22 / 22 PASS** |
-| Jest 29 — Suite B : `pur02-http-handler.test.js` — 16 scénarios handlers HTTP | **16 / 16 PASS** |
+| Jest 30.5.2 — Suite A : `pur02-candidate.test.js` — 22 scénarios unitaires | **22 / 22 PASS** |
+| Jest 30.5.2 — Suite B : `pur02-http-handler.test.js` — 16 scénarios handlers HTTP | **16 / 16 PASS** |
 | **Total v4e pré-fix#1b** | **38 / 38 PASS** |
 
 ### v4e + fix#1b (2026-11-04) — résultats consolidés après contre-revue
@@ -90,9 +101,9 @@ f6dda7152e476a6078533a8c06f458204d36c2abd550b08bbf69c8ccf232727a  ref-purgeDocum
 |---|---|
 | `node --check` sur `candidate-purgeDocument-v4e.js` (fix#1b) | ✓ Aucune erreur de syntaxe |
 | `node --check` sur les trois fichiers de tests | ✓ |
-| Jest 29 — Suite A : `pur02-candidate.test.js` — 22 scénarios unitaires | **22 / 22 PASS** |
-| Jest 29 — Suite B : `pur02-http-handler.test.js` — 16 scénarios handlers HTTP | **16 / 16 PASS** |
-| Jest 29 — Suite C : `pur02-path-security.test.js` — 14 scénarios sécurité chemins | **14 / 14 PASS** |
+| Jest 30.5.2 — Suite A : `pur02-candidate.test.js` — 22 scénarios unitaires | **22 / 22 PASS** |
+| Jest 30.5.2 — Suite B : `pur02-http-handler.test.js` — 16 scénarios handlers HTTP | **16 / 16 PASS** |
+| Jest 30.5.2 — Suite C : `pur02-path-security.test.js` — 14 scénarios sécurité chemins | **14 / 14 PASS** |
 | **Total v4e + fix#1b** | **52 / 52 PASS** |
 
 Sortie Jest complète (2026-11-04) :
@@ -182,14 +193,28 @@ Tests: 14 passed, 14 total
 ### Commandes de reproduction
 
 ```bash
+# Environnement ayant produit les 52 PASS (2026-11-04/05)
+# Node.js v22.22.0 / Jest 30.5.2
+
 # Dans scratchpad/test-run-v4e/
 cd scratchpad/test-run-v4e
-npx jest --no-coverage
-# → 52 passed, 3 suites
+node --version          # v22.22.0
+npx jest --version      # 30.5.2
+npx jest --no-coverage  # → 52 passed, 3 suites
+
+# Suites individuelles
+npx jest --no-coverage pur02-candidate        # Suite A — 22 PASS
+npx jest --no-coverage pur02-http-handler     # Suite B — 16 PASS
+npx jest --no-coverage pur02-path-security    # Suite C — 14 PASS
 
 # Vérification empreintes
-sha256sum candidate-purgeDocument-v4e.js pur02-candidate.test.js \
-           pur02-http-handler.test.js pur02-path-security.test.js
+sha256sum candidate-purgeDocument-v4e.js PUR-02-E-purgeDocument-v4e-fix1b.patch \
+          pur02-candidate.test.js pur02-http-handler.test.js \
+          pur02-path-security.test.js
+
+# Vérification application du patch (depuis la racine du serveur)
+patch --dry-run -p1 < PUR-02-E-purgeDocument-v4e-fix1b.patch
+# → Hunk #1 succeeded — APPLY_OK
 ```
 
 ---
@@ -329,7 +354,7 @@ if (
 **Résolution** :
 - Fix#1b appliqué → nouveau SHA candidat : `90a21b04…`
 - Suite C créée (14 scénarios) → SHA `89e32abc…`
-- Suite A mise à jour (CANDIDATE_PURGE → v4e, Scénario 5d → FOLDER_NAME_INVALID) → SHA `b261a32f…`
+- Suite A mise à jour (CANDIDATE_PURGE → v4e, Scénario 5d → FOLDER_NAME_INVALID, commentaire d'en-tête 17→22) → SHA `f3e88f13…`
 - **Total normalisé : 52 / 52 PASS** (22 Suite A + 16 Suite B + 14 Suite C)
 - Toutes les empreintes dans cette fiche de livraison correspondent aux fichiers du run 2026-11-04.
 

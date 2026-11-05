@@ -7,7 +7,7 @@
  * - No active LanceDB namespace is touched: lancedb is mocked via jest.mock().
  * - No real Workspace or Document model is loaded: all dependencies mocked.
  *
- * 17 scenarios:
+ * 22 tests (17 scénarios numérotés + sous-scénarios 5b/5c/5d):
  *   1. removeDocuments — absent document (not found → silently skip, no error)
  *   2. removeDocuments — SQL read error (_getStrict propagates, does NOT return null)
  *   3. removeDocuments — LanceDB error (aborts before SQL, record preserved)

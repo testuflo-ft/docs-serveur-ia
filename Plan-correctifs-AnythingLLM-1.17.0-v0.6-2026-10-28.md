@@ -1,6 +1,6 @@
 # Correctifs ciblés --- AnythingLLM (audit 1.17.0 ; instance 1.19.0 depuis le 25/10/2026)
 
-*Version 0.6 --- 28 octobre 2026 (mise à jour documentaire 5 novembre 2026)*\
+*Version 0.7 (mise à jour documentaire 5 novembre 2026) — base : v0.6 du 28 octobre 2026*\
 *Statut : plan révisé après le bilan du 28/10/2026. Deux changements de production sont rapportés : DOS-02 (limite de corps sur `/api/embed`, image 1.19.0, preuve statique) et ALLM-10 (protection de suppression de workspace activée le 27/10/2026, test unitaire seulement). INT-18 et INT-20/PUR-02 sont corrigés en laboratoire uniquement. CP-3 n'est pas appliqué. Aucun test de la matrice n'est déclaré exécuté par cette session ; les tests de laboratoire rapportés sont partiels.*\
 *Mise à jour 05/11/2026 : PUR-02 v4e + fix#1b — contre-revue indépendante favorable ; 52/52 tests PASS (22 Suite A + 16 Suite B + 14 Suite C) ; statut : candidat prêt pour essai isolé, non déployé. D6, §2.6, §4 et matrice mis à jour ci-dessous.*
 

@@ -349,7 +349,7 @@ Deux défauts ouverts non bloquants pour un essai isolé :
 - Les quatre corrections C14–C17 sont présentes, correctes et cohérentes avec le diff.
 - Le contrat d'erreur est entièrement testé sur les handlers réels de production (endpoints-system.js, api-document-index.js).
 - La sécurité des chemins est vérifiée avec les vraies fonctions `normalizePath` et `isWithin` d'AnythingLLM 1.19.0 : aucun chemin traversal ne conduit à un accès hors du répertoire documents.
-- 48/48 tests passent sur Node 22.22.0 / Jest 30.5.2.
+- 52/52 tests passent sur Node 22.22.0 / Jest 30.5.2 (voir addendum A.3 — Suite C étendue à 14 tests après contre-revue).
 
 **Ce qui reste hors périmètre de l'essai isolé :**
 - La non-atomicité Prisma/LanceDB (L-1) est un risque architectural connu, documenté, non adressable dans v4.
@@ -464,7 +464,7 @@ Fix#1b a été appliqué au candidat → nouveau SHA unique et cohérent pour le
 
 | Fichier | Rôle | SHA-256 (après fix#1b) |
 |---|---|---|
-| `pur02-candidate.test.js` | Suite A — 22 tests unitaires | `b261a32f718ff8a27bea2133ccc4c4c836a150afc39d1f8cd30488a0e9040bfa` |
+| `pur02-candidate.test.js` | Suite A — 22 tests unitaires | `f3e88f13165dc273749284c18750f9c745d8194a3f8e635664d18f24dbab8cbf` |
 | `pur02-http-handler.test.js` | Suite B — 16 tests handler réel | `cb9702bdddcadd126487f1e5e5397075cb7a4a2a7b5144c93285819a694eff55` *(inchangé)* |
 | `pur02-path-security.test.js` | Suite C — 14 tests sécurité chemins | `89e32abc8c171b0aa7ad14cc90d49b614534e249c3e64f85d2fbabc6712d7921` |
 
