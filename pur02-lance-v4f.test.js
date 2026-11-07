@@ -33,7 +33,8 @@ const fs     = require("fs");
 // Chemins des candidats
 // ---------------------------------------------------------------------------
 const LANCE_V4F_PATH = path.resolve(__dirname, "candidate-lance-index-v4f.js");
-const CANDIDATE_DOCS_PATH = "/home/claude/testuflo-ft/docs-serveur-ia/candidate-documents.js";
+// candidate-documents.js doit être dans le même dossier que ce fichier de tests
+const CANDIDATE_DOCS_PATH = path.resolve(__dirname, "candidate-documents.js");
 
 // ---------------------------------------------------------------------------
 // loadCandidateModule — identique à pur02-http-handler.test.js
@@ -210,14 +211,58 @@ describe("Suite R — rollback addDocuments avec LanceDb v4f", () => {
     expect(documentVectorsDelete).toHaveBeenCalledWith(expect.objectContaining({ docId: expect.any(String) }));
   });
 
-  test("R-02 rollback : LanceDB retourne true pour namespace absent (v4f) → DocumentVectors.delete() appelé", async () => {
-    // Avant v4f : deleteDocumentFromNamespace retournait false → SQL skip
-    // Après v4f  : retourne true  → SQL nettoyé
-    const { Document, documentVectorsDelete } = loadDocuments({ deleteFromNsResult: true });
-    const workspace = { id: 2, slug: "ws-new", name: "New WS" };
+  test("R-02 test intégré : v4f réel (namespace absent) + rollback addDocuments → DocumentVectors.delete() appelé", async () => {
+    // Ce test exerce la vraie deleteDocumentFromNamespace() de v4f
+    // (contrairement à R-01 qui stubbe directement le résultat).
+    // Avant v4f : namespaceExists=false → return false → vectorsRemoved=false → SQL skip
+    // Après v4f  : namespaceExists=false → return true → vectorsRemoved=true → SQL nettoyé
 
-    await Document.addDocuments(workspace, ["docs/another.txt"]);
+    // 1. Charger la vraie LanceDb v4f et mocker connect/namespaceExists
+    const { LanceDb } = loadCandidateModule(LANCE_V4F_PATH, {
+      "@lancedb/lancedb":               { connect: jest.fn() },
+      "../../helpers":                  { toChunks: () => [], getEmbeddingEngineSelection: () => ({}) },
+      "../../TextSplitter":             { TextSplitter: class {} },
+      "../../../models/systemSettings": { SystemSettings: { getValueOrFallback: jest.fn().mockResolvedValue(null) } },
+      "../../files":                    { storeVectorResult: jest.fn(), cachedVectorInformation: jest.fn().mockResolvedValue({ exists: false }) },
+      uuid:                             { v4: () => "test-uuid" },
+      "../../chats":                    { sourceIdentifier: () => "" },
+      "../../EmbeddingRerankers/native":{ NativeEmbeddingReranker: class {} },
+      "../base":                        { VectorDatabase: class { logger() {} } },
+      path:                             require("path"),
+      "../../../utils/prisma":          { document_vectors: { findMany: jest.fn() } },
+    });
 
+    const lanceInstance = new LanceDb();
+    lanceInstance.connect = jest.fn().mockResolvedValue({ client: {} });
+    lanceInstance.namespaceExists = jest.fn().mockResolvedValue(false); // namespace absent
+    lanceInstance.addDocumentToNamespace = jest.fn().mockResolvedValue({ vectorized: true, error: null });
+
+    const documentVectorsDelete = jest.fn().mockResolvedValue(true);
+
+    // 2. Injecter cette instance réelle dans candidate-documents
+    const { Document } = loadCandidateModule(CANDIDATE_DOCS_PATH, {
+      uuid:                      { v4: () => "stub-uuid-" + Math.random().toString(36).slice(2) },
+      "../utils/helpers":        { getVectorDbClass: () => lanceInstance },
+      "../utils/prisma":         {
+        workspace_documents: { create: jest.fn().mockRejectedValue(new Error("DB constraint violation")) },
+      },
+      "./telemetry":             { Telemetry: { sendTelemetry: jest.fn().mockResolvedValue(undefined) } },
+      "./eventLogs":             { EventLogs: { logEvent: jest.fn().mockResolvedValue(undefined) } },
+      "../utils/http":           { safeJsonParse: (s, d) => { try { return JSON.parse(s); } catch { return d; } } },
+      "../endpoints/utils":      { getModelTag: () => "test-model" },
+      "../utils/files":          {
+        fileData: jest.fn().mockResolvedValue({ pageContent: "Contenu de test", title: "t.txt", docId: "d1" }),
+      },
+      "../utils/EmbeddingWorkerManager": { emitProgress: jest.fn() },
+      "./vectors":               { DocumentVectors: { delete: documentVectorsDelete, bulkInsert: jest.fn().mockResolvedValue(true) } },
+    });
+
+    // 3. Déclencher le rollback
+    await Document.addDocuments({ id: 2, slug: "ws-new", name: "New WS" }, ["docs/another.txt"]);
+
+    // La vraie deleteDocumentFromNamespace a été appelée via namespaceExists (preuve du chaînage)
+    expect(lanceInstance.namespaceExists).toHaveBeenCalled();
+    // Elle a retourné true (fix v4f) → SQL nettoyé
     expect(documentVectorsDelete).toHaveBeenCalledTimes(1);
   });
 
