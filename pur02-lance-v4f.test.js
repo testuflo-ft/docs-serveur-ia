@@ -180,7 +180,7 @@ describe("Suite R — rollback addDocuments avec LanceDb v4f", () => {
     };
 
     const { Document } = loadCandidateModule(CANDIDATE_DOCS_PATH, {
-      uuid:                      { v4: () => "stub-uuid-" + Math.random().toString(36).slice(2) },
+      uuid:                      { v4: () => "stub-uuid-fixed" },
       "../utils/helpers":        { getVectorDbClass: () => VectorDbStub },
       "../utils/prisma":         prismaStub,
       "./telemetry":             { Telemetry: { sendTelemetry: jest.fn().mockResolvedValue(undefined) } },
@@ -237,11 +237,15 @@ describe("Suite R — rollback addDocuments avec LanceDb v4f", () => {
     lanceInstance.namespaceExists = jest.fn().mockResolvedValue(false); // namespace absent
     lanceInstance.addDocumentToNamespace = jest.fn().mockResolvedValue({ vectorized: true, error: null });
 
+    // Capturer les arguments de deleteDocumentFromNamespace — la vraie logique v4f reste active
+    const origDeleteFromNs = lanceInstance.deleteDocumentFromNamespace.bind(lanceInstance);
+    lanceInstance.deleteDocumentFromNamespace = jest.fn().mockImplementation(origDeleteFromNs);
+
     const documentVectorsDelete = jest.fn().mockResolvedValue(true);
 
     // 2. Injecter cette instance réelle dans candidate-documents
     const { Document } = loadCandidateModule(CANDIDATE_DOCS_PATH, {
-      uuid:                      { v4: () => "stub-uuid-" + Math.random().toString(36).slice(2) },
+      uuid:                      { v4: () => "stub-uuid-r02" },
       "../utils/helpers":        { getVectorDbClass: () => lanceInstance },
       "../utils/prisma":         {
         workspace_documents: { create: jest.fn().mockRejectedValue(new Error("DB constraint violation")) },
@@ -260,10 +264,13 @@ describe("Suite R — rollback addDocuments avec LanceDb v4f", () => {
     // 3. Déclencher le rollback
     await Document.addDocuments({ id: 2, slug: "ws-new", name: "New WS" }, ["docs/another.txt"]);
 
-    // La vraie deleteDocumentFromNamespace a été appelée via namespaceExists (preuve du chaînage)
+    // La vraie deleteDocumentFromNamespace a été appelée via namespaceExists (preuve du chaînage v4f)
     expect(lanceInstance.namespaceExists).toHaveBeenCalled();
-    // Elle a retourné true (fix v4f) → SQL nettoyé
+    // Le même docId (stub-uuid-r02, généré par uuidv4()) a été transmis à LanceDB et au nettoyage SQL
+    expect(lanceInstance.deleteDocumentFromNamespace).toHaveBeenCalledWith(expect.any(String), "stub-uuid-r02");
+    // Elle a retourné true (fix v4f) → SQL nettoyé avec le même docId
     expect(documentVectorsDelete).toHaveBeenCalledTimes(1);
+    expect(documentVectorsDelete).toHaveBeenCalledWith(expect.objectContaining({ docId: "stub-uuid-r02" }));
   });
 
   test("R-03 contrôle négatif : LanceDB lève une exception → DocumentVectors.delete() NON appelé", async () => {
@@ -274,7 +281,7 @@ describe("Suite R — rollback addDocuments avec LanceDb v4f", () => {
     };
 
     const { Document } = loadCandidateModule(CANDIDATE_DOCS_PATH, {
-      uuid:                      { v4: () => "stub-uuid-" + Math.random().toString(36).slice(2) },
+      uuid:                      { v4: () => "stub-uuid-r03" },
       "../utils/helpers":        { getVectorDbClass: () => VectorDbStub },
       "../utils/prisma":         {
         workspace_documents: { create: jest.fn().mockRejectedValue(new Error("create failed")) },
