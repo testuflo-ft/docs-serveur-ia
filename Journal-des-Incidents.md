@@ -9,7 +9,7 @@ Format de chaque entrée :
 - **Test de validation**
 - **Précautions pour la prochaine fois**
 
-## Lecture de cette version (1.2)
+## Lecture de cette version (1.3)
 
 **Sources de preuve (légende utilisée dans ce document) :**
 - **[C17]** code amont, tag `v1.17.0` (commit `fa7ec877f005a21ede94888b3b8618b700343857`), relu en lecture seule le 25/10/2026.
@@ -1369,7 +1369,7 @@ Fichiers locaux, à publier manuellement par Florian après relecture (GIT-01 no
 
 **Date :** 7–8 novembre 2026
 **Type :** entrée de mission
-**Statut :** ✅ Documents produits en local ; **non publiés sur GitHub** (autorisation de Florian requise ; GIT-01)
+**Statut :** ✅ Documents de référence (`Journal-des-Incidents.md` v1.3, `Livret-Technique-Serveur-IA.md` v0.9, `Plan-correctifs-AnythingLLM.md` v0.8) publiés sur `main` par Florian (8 novembre 2026). Candidat `candidate-lance-index-v4f.js` (SHA `8103f042…`) sur `correctif-PUR-02`. Candidat `pur02-lance-v4f.test.js` mis à jour localement (SHA `11d835b2…` — 5 corrections appliquées) ; à pousser sur `correctif-PUR-02` par Florian.
 
 **Contexte :** Audit indépendant (ChatGPT) de la suite `pur02-lance-v4f.test.js` — deux corrections requises identifiées ; correction de l'anomalie `deleteDocumentFromNamespace()` v4 dans le compagnon LanceDB ; mise à jour documentaire des trois documents de référence.
 
@@ -1378,15 +1378,19 @@ Fichiers locaux, à publier manuellement par Florian après relecture (GIT-01 no
 - **Corrections audit ChatGPT** (deux défauts distincts) :
   - (1) Chemin non portable : `CANDIDATE_DOCS_PATH` pointait vers un chemin absolu de session (`/tmp/claude-…`) ; corrigé en `path.resolve(__dirname, "candidate-documents.js")`.
   - (2) Tests R-01 et R-02 redondants : tous deux mockaient directement `deleteDocumentFromNamespace` sans exercer le code v4f. R-02 réécrit comme vrai test d'intégration : vraie classe `LanceDb` chargée depuis `candidate-lance-index-v4f.js`, `namespaceExists` simulé à `false`, injection via `getVectorDbClass` dans `candidate-documents.js` ; `expect(lanceInstance.namespaceExists).toHaveBeenCalled()` prouve que le chemin v4f réel a été traversé.
+- **Corrections audit ChatGPT — second examen (8 novembre 2026)** :
+  - (3) UUID déterministes : `Math.random()` supprimé dans les trois occurrences ; valeurs fixes (`"stub-uuid-fixed"`, `"stub-uuid-r02"`, `"stub-uuid-r03"`) pour reproductibilité.
+  - (4) R-02 : spy enveloppant la vraie `deleteDocumentFromNamespace` : `jest.fn().mockImplementation(origDeleteFromNs)` conserve l'exécution réelle tout en capturant les arguments.
+  - (5) R-02 : vérification du même `docId` dans LanceDB et SQL → `expect(lanceInstance.deleteDocumentFromNamespace).toHaveBeenCalledWith(expect.any(String), "stub-uuid-r02")` et `expect(documentVectorsDelete).toHaveBeenCalledWith(expect.objectContaining({ docId: "stub-uuid-r02" }))`.
 - **Anomalie v4 identifiée et corrigée** : `deleteDocumentFromNamespace()` retournait `false` pour les no-ops (namespace absent ou 0 vecteur trouvé). Dans `addDocuments()`, `vectorsRemoved = deleted !== false` → si `false`, `DocumentVectors.delete()` n'est pas appelé → nettoyage SQL silencieusement sauté lors d'un rollback. Aucun impact sur PUR-02-E (la valeur de retour est ignorée dans `removeDocuments()`) mais correction du chemin de rollback général.
 - **Candidat `candidate-lance-index-v4f.js`** : `return true` pour les deux cas no-op (namespace absent ; 0 vecteur). SHA-256 : `8103f042a0fed63db1d6f79db61ceb6eef97687e87893bec9747abe1d2c9149f` (vérifié).
-- **Suite `pur02-lance-v4f.test.js`** : 8/8 PASS — L-01..L-05 (`deleteDocumentFromNamespace`), R-01..R-03 (rollback `addDocuments`). SHA-256 : `832bb2d2dd34e02c77ff89c7cffcdc23aecd0f692ebba0f72eb81da42c488012`. SHA vérifié par ChatGPT sur `correctif-PUR-02`.
+- **Suite `pur02-lance-v4f.test.js`** : **8/8 PASS [LAB]** — L-01..L-05 (`deleteDocumentFromNamespace`), R-01..R-03 (rollback `addDocuments`) — rapporté par la session Claude en laboratoire isolé (Node.js + mocks). R-02 : vraie classe `LanceDb` v4f, `namespaceExists` simulé `false`, `connect` simulé — pas de vraie base SQL ni de vrai stockage LanceDB. SHA-256 (version finale, après 5 corrections) : `11d835b2eb1ed91b97ac6c9be6f9fae7bb5c585fbe0dd70ae7e306c65917a465`. SHA précédent (`832bb2d2…`) vérifié par ChatGPT sur `correctif-PUR-02` le 08/11/2026 — correspondait à la version avant corrections finales.
 
-**Mise à jour documentaire :** les trois documents de référence (`Livret-Technique-Serveur-IA.md` v0.9, `Journal-des-Incidents.md` v1.3, `Plan-correctifs-AnythingLLM-1.17.0-v0.6-2026-10-28.md` v0.8) intègrent v4e + fix#1b (manquant dans le Livret depuis Nov 1) et le compagnon v4f.
+**Mise à jour documentaire :** les trois documents de référence (`Livret-Technique-Serveur-IA.md` v0.9, `Journal-des-Incidents.md` v1.3, `Plan-correctifs-AnythingLLM.md` v0.8) intègrent v4e + fix#1b (manquant dans le Livret depuis Nov 1) et le compagnon v4f.
 
 **Non fait :** aucun déploiement ; aucune modification de la production ; PUR-02-E (v4e + fix#1b) reste candidat non déployé, en attente d'essai isolé.
 
-**Documents :** `Livret-Technique-Serveur-IA.md` (v0.9), `Journal-des-Incidents.md` (v1.3), `Plan-correctifs-AnythingLLM-1.17.0-v0.6-2026-10-28.md` (v0.8) ; candidats `candidate-lance-index-v4f.js` et `pur02-lance-v4f.test.js` déposés sur `correctif-PUR-02`.
+**Documents :** `Livret-Technique-Serveur-IA.md` (v0.9), `Journal-des-Incidents.md` (v1.3), `Plan-correctifs-AnythingLLM.md` (v0.8) publiés sur `main` par Florian. Candidat `candidate-lance-index-v4f.js` (SHA `8103f042…`) sur `correctif-PUR-02`. Candidat `pur02-lance-v4f.test.js` mis à jour localement (SHA `11d835b2…` — 5 corrections) ; à pousser sur `correctif-PUR-02` par Florian.
 
 ---
 
@@ -1435,7 +1439,7 @@ Fichiers locaux, à publier manuellement par Florian après relecture (GIT-01 no
 ---
 
 *Dernière mise à jour : 8 novembre 2026*
-*Version 1.3 — 8 novembre 2026 : compagnon LanceDB v4f (`candidate-lance-index-v4f.js`, SHA `8103f042…`) — `deleteDocumentFromNamespace()` retourne `true` pour les no-ops ; 8/8 tests PASS (L-01..L-05, R-01..R-03), dont R-02 vrai test d'intégration ; corrections audit ChatGPT (chemin portable, R-02). Ajout MISS-05. ALLM-16, D6 et historique rouvert/réévalué mis à jour. Aucun déploiement. Base : v1.2.*
+*Version 1.3 — 8 novembre 2026 : compagnon LanceDB v4f (`candidate-lance-index-v4f.js`, SHA `8103f042…`) — `deleteDocumentFromNamespace()` retourne `true` pour les no-ops ; 8/8 tests PASS [LAB] (L-01..L-05, R-01..R-03), dont R-02 vrai test d'intégration avec spy et vérification du même docId ; 5 corrections audit ChatGPT appliquées ; test SHA final `11d835b2…`. Documents publiés sur `main`. Ajout MISS-05. ALLM-16, D6 et historique rouvert/réévalué mis à jour. Aucun déploiement. Base : v1.2.*
 *Version 1.2 — 5 novembre 2026 : mise à jour PUR-02-E v4e + fix#1b. Candidat validé par 52/52 tests (22 Suite A + 16 Suite B + 14 Suite C), prêt pour essai isolé, non déployé. Patch SHA-256 : `86043b316bb40bbee3a9cc706d756255bbded05e278e3033ee018f14b1dbd8aa`. INT-18 reste non validé et non déployé. Base : v1.1.*
 *Version 1.1 : contre-revue indépendante v4e + fix#1b (2026-11-05) — défaut D-2 traité, Suite C étendue à 14 tests, total 52/52 PASS ; ALLM-16 statut, D6, historique rouvert/réévalué, section "Mise à jour 2026-11-05" et vérifications en attente mis à jour ; patch SHA actualisé (`86043b31…`). Base : v1.0 (1er nov 2026).*
 *Version 1.0 : intègre la validation PUR-02 v4 (9/9 tests d'intégration réels + 17/17 unitaires, consolidation v3 22/22) ; section "Mise à jour 01/11/2026" ajoutée ; ALLM-05 et ALLM-16 mis à jour ; ALLM-16 action recommandée complétée (PUR-02 v4) ; vérifications en attente ALLM-16 mise à jour ; D6 révisée ; historique rouvert/réévalué complété. Base : v0.9 (28 oct 2026).*

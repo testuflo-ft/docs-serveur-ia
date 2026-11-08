@@ -966,20 +966,22 @@ Codes d'erreur canoniques : `FOLDER_NAME_REQUIRED` (nom vide), `FOLDER_NAME_INVA
 - Namespace absent → `return true` (au lieu de `return false`)
 - 0 vecteur trouvé → `return true` (au lieu de `return false`)
 
-**Tests `pur02-lance-v4f.test.js` — 8/8 PASS :**
+**Tests `pur02-lance-v4f.test.js` — 8/8 PASS [LAB] (rapportés par la session Claude) :**
 - Suite L (5 tests) : L-01 namespace absent → `true` ; L-02 0 vecteur → `true` ; L-03 suppression effective → `true`, `table.delete()` appelé ; L-04 erreur SQL → exception ; L-05 erreur LanceDB → exception.
-- Suite R (3 tests) : R-01 rollback, `deleteDocumentFromNamespace` stubbé `true` → `DocumentVectors.delete()` appelé ; R-02 vrai test d'intégration, vraie classe `LanceDb` v4f, `namespaceExists` simulé `false`, preuve que le code v4f a été traversé → `DocumentVectors.delete()` appelé ; R-03 contrôle négatif, exception LanceDB → `DocumentVectors.delete()` non appelé.
+- Suite R (3 tests) : R-01 rollback, `deleteDocumentFromNamespace` stubbé `true` → `DocumentVectors.delete()` appelé ; R-02 vrai test d'intégration, vraie classe `LanceDb` v4f, `namespaceExists` simulé `false`, spy sur la méthode réelle conservant l'exécution v4f, vérification que le même `docId` (`"stub-uuid-r02"`) est transmis à `deleteDocumentFromNamespace()` et à `DocumentVectors.delete()` ; R-03 contrôle négatif, exception LanceDB → `DocumentVectors.delete()` non appelé.
 
-Corrections appliquées sur suggestion audit ChatGPT : (1) chemin portable `path.resolve(__dirname, "candidate-documents.js")` ; (2) R-02 réécrit comme vrai test d'intégration.
+Limites du test : `namespaceExists`, `connect` et les dépendances SQL sont simulés (mocks) — pas de vraie instance LanceDB ni de vraie base SQL. Résultat rapporté par la session Claude [LAB] ; non vérifié de manière indépendante.
+
+Corrections appliquées sur suggestion audit ChatGPT — deux séries : (1) chemin portable `path.resolve(__dirname, "candidate-documents.js")` ; (2) R-02 réécrit comme vrai test d'intégration ; (3) UUID déterministes (`Math.random()` supprimé dans les trois occurrences) ; (4) spy enveloppant la vraie `deleteDocumentFromNamespace()` dans R-02 — conserve l'exécution réelle tout en capturant les arguments ; (5) R-02 : vérification du même `docId` (`"stub-uuid-r02"`) dans l'appel LanceDB et dans `DocumentVectors.delete()`.
 
 #### Candidats v4f (SHA-256)
 
 | Fichier | SHA-256 |
 |---|---|
 | `candidate-lance-index-v4f.js` | `8103f042a0fed63db1d6f79db61ceb6eef97687e87893bec9747abe1d2c9149f` |
-| `pur02-lance-v4f.test.js` | `832bb2d2dd34e02c77ff89c7cffcdc23aecd0f692ebba0f72eb81da42c488012` |
+| `pur02-lance-v4f.test.js` | `11d835b2eb1ed91b97ac6c9be6f9fae7bb5c585fbe0dd70ae7e306c65917a465` |
 
-SHA-256 vérifiés sur `correctif-PUR-02` par ChatGPT (08/11/2026).
+SHA-256 `candidate-lance-index-v4f.js` (`8103f042…`) vérifié sur `correctif-PUR-02` par ChatGPT (08/11/2026). SHA-256 `pur02-lance-v4f.test.js` (`11d835b2…`) : version finale après 5 corrections, rapportée par la session Claude.
 
 **Statut v4f :** non déployé. Statut PUR-02-E (v4e + fix#1b) inchangé — candidat prêt pour essai isolé, non déployé.
 
@@ -1117,7 +1119,7 @@ Toutes ces commandes sont en lecture seule. Elles ne prouvent pas la provenance 
 *Auteur : Florian — élaboré avec Claude et ChatGPT*
 *Sources : notes de passation ChatGPT (9, 11, 12 oct 2026) + conversations Claude oct 2026 + audit AnythingLLM oct 2026 + dossiers ChatGPT 23 oct 2026 + Plan-correctifs v0.4 (24 oct 2026) + passation ChatGPT du 25 oct 2026 + conclusions validées du 25 oct 2026 (21:37) + relecture du code amont par Claude le 25 oct 2026 (tag v1.17.0 et commit a5bb8b9)*
 *Version 0.9 — 8 novembre 2026*
-*Changements v0.9 : mise à jour PUR-02 v4e + fix#1b (52/52 tests PASS, 22A+16B+14C, patch SHA `86043b31…`, contre-revue indépendante) manquant depuis v0.8 ; ajout compagnon LanceDB v4f (`candidate-lance-index-v4f.js`, SHA `8103f042…`, 8/8 PASS, L-01..L-05 + R-01..R-03) ; section 14.12 (statut v4e+fix#1b + v4f), 14.13 (matrice PUR-01, PUR-02), 14.15 (mises à jour 2026-11-05 et 2026-11-08), 14.22 (v4e+fix#1b, v4f) mis à jour. PUR-02-E non déployé — essai isolé requis. Base : v0.8 (1er nov 2026).*
+*Changements v0.9 : mise à jour PUR-02 v4e + fix#1b (52/52 tests PASS, 22A+16B+14C, patch SHA `86043b31…`, contre-revue indépendante) manquant depuis v0.8 ; ajout compagnon LanceDB v4f (`candidate-lance-index-v4f.js`, SHA `8103f042…`, 8/8 PASS [LAB], L-01..L-05 + R-01..R-03) ; 5 corrections test v4f (UUID déterministes, spy R-02 conservant l'exécution réelle, vérification même docId) ; test SHA final `11d835b2…` ; section 14.12 (statut v4e+fix#1b + v4f), 14.13 (matrice PUR-01, PUR-02), 14.15 (mises à jour 2026-11-05 et 2026-11-08), 14.22 (v4e+fix#1b, v4f) mis à jour. PUR-02-E non déployé — essai isolé requis. Base : v0.8 (1er nov 2026).*
 *Changements v0.8 : intégration de la validation PUR-02 v4 (9/9 tests d'intégration + 17/17 unitaires, consolidation v3 22/22) ; nouvelle section 14.22 (PUR-02 v4) ; section 7.4 mise à jour ; section 14.12 mise à jour (statut ALLM-16) ; matrice 14.13 mise à jour (PUR-01, PUR-02) ; section 14.15 mise à jour (milestone 2026-11-01). Non déployé — essai isolé requis. Base : v0.7 (28 oct 2026).*
 *Changements v0.7 : intégration du bilan ChatGPT du 28/10/2026 (étiquettes [PROD] et [LAB] ; ALLM-10 activé en production le 27/10, test unitaire seulement ; configuration `compose.yaml` ; états partiels dans la matrice ; correctifs de laboratoire INT-18 et INT-20/PUR-02 non validés ni déployés ; nouvelle section 14.21 ; items 6, 25, 29, 30 de la section 13 ; 15.4 mis à jour). Base : v0.6 (25 oct 2026).*
 *Changements v0.6 : légende des sources de preuve et numérotation canonique en tête ; sections 5.2, 7.1, 7.4, 11 mises à jour (version 1.19.0, retour arrière, versions de documents) ; section 13 : items 6, 7, 8, 16, 22, 23 révisés et items 25 à 28 ajoutés ; section 14 datée du 25 oct ; 14.8 (ALLM-10 : disponible, désactivée) et 14.9 (ALLM-12 : CP-3 non appliqué automatiquement, options A/B/C) réécrites ; 14.7 (ALLM-05), 14.10 (ALLM-14), 14.11 (ALLM-06 ouvert), 14.16 (DOS-02 corrigé et déployé, preuve statique) et 14.20 (RACE-01) mises à jour ; 14.13 : matrice portée à 32 identifiants (RAG-03A/B, SEC-10) ; 14.14 et 14.15 révisées ; 15.4 à 15.6 révisées (commande de version corrigée, commandes de lecture seule ajoutées). Base : v0.5 (24 oct 2026).*

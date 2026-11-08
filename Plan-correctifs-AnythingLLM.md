@@ -3,15 +3,14 @@
 *Version 0.8 (mise à jour documentaire 8 novembre 2026) — base : v0.7 du 5 novembre 2026*\
 *Statut : plan révisé après le bilan du 28/10/2026. Deux changements de production sont rapportés : DOS-02 (limite de corps sur `/api/embed`, image 1.19.0, preuve statique) et ALLM-10 (protection de suppression de workspace activée le 27/10/2026, test unitaire seulement). INT-18 et INT-20/PUR-02 sont corrigés en laboratoire uniquement. CP-3 n'est pas appliqué. Aucun test de la matrice n'est déclaré exécuté par cette session ; les tests de laboratoire rapportés sont partiels.*\
 *Mise à jour 05/11/2026 : PUR-02 v4e + fix#1b — contre-revue indépendante favorable ; 52/52 tests PASS (22 Suite A + 16 Suite B + 14 Suite C) ; statut : candidat prêt pour essai isolé, non déployé.*\
-*Mise à jour 08/11/2026 : compagnon LanceDB v4f — `deleteDocumentFromNamespace()` → `true` pour no-ops ; 8/8 PASS ; corrections audit ChatGPT (chemin portable, R-02 vrai test d'intégration) ; SHA vérifiés. Statut PUR-02-E inchangé. D6, §4 et matrice mis à jour ci-dessous.*
+*Mise à jour 08/11/2026 : compagnon LanceDB v4f — `deleteDocumentFromNamespace()` → `true` pour no-ops ; 8/8 PASS [LAB] ; 5 corrections audit ChatGPT (chemin portable, R-02 vrai test d'intégration, UUID déterministes, spy + vérification docId) ; test SHA final `11d835b2…` ; candidat SHA `8103f042…` inchangé. Statut PUR-02-E inchangé. D6, §4 et matrice mis à jour ci-dessous.*
 
 ## 1. Objet et règles impératives
 
 Ce document constitue le plan opérationnel de référence pour les
 correctifs ciblés AnythingLLM. L'audit statique porte sur le tag amont
-`v1.17.0` ; l'instance exécutée est en 1.19.0 depuis le 25/10/2026. Le
-nom de fichier est conservé pour la continuité des références. Il
-complète le Journal des Incidents v0.9 et le Livret Technique v0.7 ; il
+`v1.17.0` ; l'instance exécutée est en 1.19.0 depuis le 25/10/2026. Il
+complète le Journal des Incidents v1.3 et le Livret Technique v0.9 ; il
 fixe la matrice maîtresse et les décisions retenues.
 
 **Conventions :** fait vérifié = constat direct dans le code examiné ;
@@ -508,7 +507,7 @@ parent.
 
 **État au 05/11/2026 [LAB] (INT-20, PUR-02) — candidat v4e + fix#1b :** contre-revue indépendante favorable (ChatGPT, 2026-11-04). Défaut D-2 traité (fix#1b : vérification pré-normalisation, 400 `FOLDER_NAME_INVALID`). Codes d'erreur réels : `FOLDER_NAME_REQUIRED` (nom vide), `FOLDER_NAME_INVALID` (séparateurs, traversal), `FOLDER_OUTSIDE_DOCUMENTS` (traversée hors-racine), `FOLDER_PROTECTED`, `FOLDER_NOT_FOUND`. 52/52 PASS : 22 tests unitaires (Suite A), 16 tests handler HTTP (Suite B), 14 tests sécurité chemins avec `normalizePath`/`isWithin` réels (Suite C, dont C-11..C-14 traversée avec cible existante). O-1 (`.` → 500) résolu. Patch `PUR-02-E-purgeDocument-v4e-fix1b.patch` SHA-256 `86043b31…`. **Candidat prêt pour essai isolé, non déployé.**
 
-**État au 08/11/2026 [LAB] — compagnon LanceDB v4f (`candidate-lance-index-v4f.js`) :** anomalie identifiée dans `deleteDocumentFromNamespace()` v4 : retournait `false` pour les no-ops (namespace absent ou 0 vecteur trouvé). Dans `addDocuments()`, `vectorsRemoved = deleted !== false` → si `false`, `DocumentVectors.delete()` non appelé → nettoyage SQL silencieusement sauté lors d'un rollback. **Impact sur PUR-02-E :** aucun (`removeDocuments()` n'utilise pas la valeur de retour ; seules les exceptions comptent). **Impact sur `addDocuments()` rollback :** corrigé par v4f → `true` pour les no-ops → `DocumentVectors.delete()` toujours appelé. Suite `pur02-lance-v4f.test.js` : **8/8 PASS** — L-01..L-05 (`deleteDocumentFromNamespace`), R-01..R-03 (rollback `addDocuments` ; R-02 : vrai test d'intégration, vraie classe `LanceDb` v4f, `namespaceExists` simulé `false`). Corrections appliquées sur suggestion audit ChatGPT : chemin portable (`path.resolve(__dirname, …)`) + R-02 vrai test d'intégration. SHAs : `candidate-lance-index-v4f.js` `8103f042…`, `pur02-lance-v4f.test.js` `832bb2d2…`. SHA vérifié sur `correctif-PUR-02`. **Non déployé. Statut PUR-02-E inchangé.**
+**État au 08/11/2026 [LAB] — compagnon LanceDB v4f (`candidate-lance-index-v4f.js`) :** anomalie identifiée dans `deleteDocumentFromNamespace()` v4 : retournait `false` pour les no-ops (namespace absent ou 0 vecteur trouvé). Dans `addDocuments()`, `vectorsRemoved = deleted !== false` → si `false`, `DocumentVectors.delete()` non appelé → nettoyage SQL silencieusement sauté lors d'un rollback. **Impact sur PUR-02-E :** aucun (`removeDocuments()` n'utilise pas la valeur de retour ; seules les exceptions comptent). **Impact sur `addDocuments()` rollback :** corrigé par v4f → `true` pour les no-ops → `DocumentVectors.delete()` toujours appelé. Suite `pur02-lance-v4f.test.js` : **8/8 PASS [LAB]** (rapportés par la session Claude — pas de vraie base SQL ni de vrai stockage LanceDB ; `namespaceExists` et `connect` simulés) — L-01..L-05 (`deleteDocumentFromNamespace`), R-01..R-03 (rollback `addDocuments` ; R-02 : vraie classe `LanceDb` v4f, `namespaceExists` simulé `false`, spy sur la méthode réelle, vérification du même `docId` dans LanceDB et SQL). 5 corrections audit ChatGPT : (1) chemin portable ; (2) R-02 vrai test d'intégration ; (3) UUID déterministes ; (4) spy conservant l'exécution réelle dans R-02 ; (5) vérification du même `docId` (`"stub-uuid-r02"`) dans `deleteDocumentFromNamespace()` et `DocumentVectors.delete()`. SHAs : `candidate-lance-index-v4f.js` `8103f042…` (inchangé, vérifié sur `correctif-PUR-02` par ChatGPT le 08/11), `pur02-lance-v4f.test.js` `11d835b2…` (version finale). **Non déployé. Statut PUR-02-E inchangé.**
 
 ### UPLOAD-02 --- Fichiers temporaires orphelins
 
@@ -731,10 +730,10 @@ commit ou l'image effectivement audités avant toute modification.
 -   v0.8 (mise à jour documentaire) --- 8 novembre 2026 : compagnon
     LanceDB v4f (`candidate-lance-index-v4f.js`, SHA `8103f042…`) —
     `deleteDocumentFromNamespace()` retourne `true` pour les no-ops ; 8/8
-    PASS (L-01..L-05, R-01..R-03) ; corrections audit ChatGPT (chemin
-    portable + R-02 vrai test d'intégration) ; SHA `pur02-lance-v4f.test.js`
-    `832bb2d2…` vérifié sur `correctif-PUR-02` ; §4 (INT-20/PUR-02),
-    matrice PUR-02, D6 mis à jour ; Journal v1.3, Livret v0.9.
+    PASS [LAB] ; 5 corrections audit ChatGPT (chemin portable, R-02 vrai
+    test d'intégration, UUID déterministes, spy + vérification docId) ; SHA
+    `pur02-lance-v4f.test.js` final `11d835b2…` ; §4 (INT-20/PUR-02),
+    matrice PUR-02, D6, §1 (Journal v1.3, Livret v0.9) mis à jour.
 -   v0.7 (mise à jour documentaire) --- 5 novembre 2026 : PUR-02 v4e +
     fix#1b — contre-revue indépendante favorable (ChatGPT, 2026-11-04) ;
     défaut D-2 traité (fix#1b : `FOLDER_NAME_INVALID`) ; codes d'erreur
