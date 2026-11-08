@@ -1,6 +1,6 @@
 # Journal des Incidents — Serveur IA Mac mini + Synology
 
-*Version 1.2 — 5 novembre 2026*
+*Version 1.3 — 8 novembre 2026*
 
 Format de chaque entrée :
 - **Symptôme** : ce qui a été observé
@@ -1365,6 +1365,31 @@ Fichiers locaux, à publier manuellement par Florian après relecture (GIT-01 no
 
 ---
 
+## MISS-05 — Session de travail 7–8 novembre 2026 : compagnon v4f et mise à jour documentaire
+
+**Date :** 7–8 novembre 2026
+**Type :** entrée de mission
+**Statut :** ✅ Documents produits en local ; **non publiés sur GitHub** (autorisation de Florian requise ; GIT-01)
+
+**Contexte :** Audit indépendant (ChatGPT) de la suite `pur02-lance-v4f.test.js` — deux corrections requises identifiées ; correction de l'anomalie `deleteDocumentFromNamespace()` v4 dans le compagnon LanceDB ; mise à jour documentaire des trois documents de référence.
+
+**Travaux techniques :**
+
+- **Corrections audit ChatGPT** (deux défauts distincts) :
+  - (1) Chemin non portable : `CANDIDATE_DOCS_PATH` pointait vers un chemin absolu de session (`/tmp/claude-…`) ; corrigé en `path.resolve(__dirname, "candidate-documents.js")`.
+  - (2) Tests R-01 et R-02 redondants : tous deux mockaient directement `deleteDocumentFromNamespace` sans exercer le code v4f. R-02 réécrit comme vrai test d'intégration : vraie classe `LanceDb` chargée depuis `candidate-lance-index-v4f.js`, `namespaceExists` simulé à `false`, injection via `getVectorDbClass` dans `candidate-documents.js` ; `expect(lanceInstance.namespaceExists).toHaveBeenCalled()` prouve que le chemin v4f réel a été traversé.
+- **Anomalie v4 identifiée et corrigée** : `deleteDocumentFromNamespace()` retournait `false` pour les no-ops (namespace absent ou 0 vecteur trouvé). Dans `addDocuments()`, `vectorsRemoved = deleted !== false` → si `false`, `DocumentVectors.delete()` n'est pas appelé → nettoyage SQL silencieusement sauté lors d'un rollback. Aucun impact sur PUR-02-E (la valeur de retour est ignorée dans `removeDocuments()`) mais correction du chemin de rollback général.
+- **Candidat `candidate-lance-index-v4f.js`** : `return true` pour les deux cas no-op (namespace absent ; 0 vecteur). SHA-256 : `8103f042a0fed63db1d6f79db61ceb6eef97687e87893bec9747abe1d2c9149f` (vérifié).
+- **Suite `pur02-lance-v4f.test.js`** : 8/8 PASS — L-01..L-05 (`deleteDocumentFromNamespace`), R-01..R-03 (rollback `addDocuments`). SHA-256 : `832bb2d2dd34e02c77ff89c7cffcdc23aecd0f692ebba0f72eb81da42c488012`. SHA vérifié par ChatGPT sur `correctif-PUR-02`.
+
+**Mise à jour documentaire :** les trois documents de référence (`Livret-Technique-Serveur-IA.md` v0.9, `Journal-des-Incidents.md` v1.3, `Plan-correctifs-AnythingLLM-1.17.0-v0.6-2026-10-28.md` v0.8) intègrent v4e + fix#1b (manquant dans le Livret depuis Nov 1) et le compagnon v4f.
+
+**Non fait :** aucun déploiement ; aucune modification de la production ; PUR-02-E (v4e + fix#1b) reste candidat non déployé, en attente d'essai isolé.
+
+**Documents :** `Livret-Technique-Serveur-IA.md` (v0.9), `Journal-des-Incidents.md` (v1.3), `Plan-correctifs-AnythingLLM-1.17.0-v0.6-2026-10-28.md` (v0.8) ; candidats `candidate-lance-index-v4f.js` et `pur02-lance-v4f.test.js` déposés sur `correctif-PUR-02`.
+
+---
+
 ## État des vérifications en attente au 28 octobre 2026
 
 - **OWUI-02 :** confirmer l'indexation du PDF OCR dans `Corpus-AI-test` et la réponse attendue (9 janvier 2027, numéro 7731-KP).
@@ -1380,7 +1405,7 @@ Fichiers locaux, à publier manuellement par Florian après relecture (GIT-01 no
 - **ALLM-08 :** valider en instance isolée si une clé Developer API peut créer ou supprimer des comptes (attendu : oui, par conception).
 - **ALLM-09 :** valider en instance isolée l'accès inter-utilisateur aux routes documentaires.
 - **ALLM-13 / D2 :** spécifier et tester la passerelle d'import dédiée pour n8n (SEC-07, SEC-08, SEC-09) ; aucun workflow n8n réel avant validation isolée.
-- **ALLM-16 :** ✅ Corrigé par PUR-02 v4e + fix#1b (52/52 tests PASS — 22 Suite A + 16 Suite B + 14 Suite C) — non déployé — essai isolé requis. Exporter les candidats avant tout arrêt du laboratoire.
+- **ALLM-16 :** ✅ Corrigé par PUR-02 v4e + fix#1b (52/52 tests PASS — 22 Suite A + 16 Suite B + 14 Suite C) — non déployé — essai isolé requis. Exporter les candidats avant tout arrêt du laboratoire. **Compagnon v4f** (08/11/2026) : `candidate-lance-index-v4f.js` (SHA `8103f042…`) — `deleteDocumentFromNamespace()` retourne `true` pour les no-ops — 8/8 tests PASS (L-01..L-05 + R-01..R-03) — non déployé, sans impact sur PUR-02-E (retour ignoré dans `removeDocuments()`), corrige le rollback `addDocuments()`.
 - **DOS-02 / D5 :** corrigé et déployé (preuve statique) ; DOS-01 et DOS-02 (413) à rejouer en laboratoire ; décider du résiduel de la limite globale de 3 Go.
 - **INT-17 à RACE-01 :** préparer et exécuter INT-17, INT-18A/B/C, INT-19A/B/C, UPLOAD-02A/B, RACE-01 en environnement isolé (D6).
 - **OPS-01 :** essai de restauration de la sauvegarde du 25/10 (`storage-anythingllm.tar.gz`) en environnement isolé.
@@ -1394,7 +1419,7 @@ Fichiers locaux, à publier manuellement par Florian après relecture (GIT-01 no
 - **D1 (ALLM-12) :** CP-3 non appliqué automatiquement — remplace « CP-3 sous conditions » du 24/10 ; décision A/B/C à prendre.
 - **D2 (automatisation) :** Option A passerelle dédiée, liste blanche — retenue, reconfirmée [VAL], à spécifier et tester.
 - **D4 :** protection de suppression **activée** le 27/10/2026 [PROD] ; test unitaire seulement.
-- **D6 :** PUR-02 v4e + fix#1b — candidat validé par 52/52 tests (22 Suite A + 16 Suite B + 14 Suite C, 2026-11-05) — non déployé — essai isolé requis. INT-18 : corrigé en laboratoire (mocks), non déployé.
+- **D6 :** PUR-02 v4e + fix#1b — candidat validé par 52/52 tests (22 Suite A + 16 Suite B + 14 Suite C, 2026-11-05) — non déployé — essai isolé requis. Compagnon v4f : `candidate-lance-index-v4f.js` — 8/8 PASS, non déployé, sans impact sur PUR-02-E. INT-18 : corrigé en laboratoire (mocks), non déployé.
 - **D5 :** DOS-02 corrigé et déployé (preuve statique).
 - **D7 :** ALLM-06 ouvert.
 - **INT-19 :** Option B résultats individuels — retenue.
@@ -1405,11 +1430,12 @@ Fichiers locaux, à publier manuellement par Florian après relecture (GIT-01 no
 - **ALLM-06** : statut « ✅ mécanisme compris » de la v0.7 remplacé par « ⚠️ ouvert ».
 - **ALLM-10** : de « protection inactive — action requise » (v0.7) à « facultative, désactivée » (v0.8) puis « activée le 27/10, test unitaire seulement » (v0.9).
 - **ALLM-12** : P0 (v0.5) → durcissement requis (v0.6) → D1 sous conditions (v0.7) → comportement intentionnel, CP-3 non appliqué automatiquement (v0.8).
-- **ALLM-16 / PUR-02** : de « risque de nettoyage incomplet, aucun correctif » (v0.5) à « corrigé en laboratoire (mocks), non validé » (v0.9) à « validé par 9/9 intégration réels + 17/17 unitaires, non déployé » (v1.0) à « candidat v4e + fix#1b, 52/52 tests (22A+16B+14C), non déployé » (v1.1).
+- **ALLM-16 / PUR-02** : de « risque de nettoyage incomplet, aucun correctif » (v0.5) à « corrigé en laboratoire (mocks), non validé » (v0.9) à « validé par 9/9 intégration réels + 17/17 unitaires, non déployé » (v1.0) à « candidat v4e + fix#1b, 52/52 tests (22A+16B+14C), non déployé » (v1.1) à « compagnon v4f : `deleteDocumentFromNamespace()` → `true` pour no-ops, 8/8 PASS, non déployé » (v1.3).
 
 ---
 
-*Dernière mise à jour : 5 novembre 2026*
+*Dernière mise à jour : 8 novembre 2026*
+*Version 1.3 — 8 novembre 2026 : compagnon LanceDB v4f (`candidate-lance-index-v4f.js`, SHA `8103f042…`) — `deleteDocumentFromNamespace()` retourne `true` pour les no-ops ; 8/8 tests PASS (L-01..L-05, R-01..R-03), dont R-02 vrai test d'intégration ; corrections audit ChatGPT (chemin portable, R-02). Ajout MISS-05. ALLM-16, D6 et historique rouvert/réévalué mis à jour. Aucun déploiement. Base : v1.2.*
 *Version 1.2 — 5 novembre 2026 : mise à jour PUR-02-E v4e + fix#1b. Candidat validé par 52/52 tests (22 Suite A + 16 Suite B + 14 Suite C), prêt pour essai isolé, non déployé. Patch SHA-256 : `86043b316bb40bbee3a9cc706d756255bbded05e278e3033ee018f14b1dbd8aa`. INT-18 reste non validé et non déployé. Base : v1.1.*
 *Version 1.1 : contre-revue indépendante v4e + fix#1b (2026-11-05) — défaut D-2 traité, Suite C étendue à 14 tests, total 52/52 PASS ; ALLM-16 statut, D6, historique rouvert/réévalué, section "Mise à jour 2026-11-05" et vérifications en attente mis à jour ; patch SHA actualisé (`86043b31…`). Base : v1.0 (1er nov 2026).*
 *Version 1.0 : intègre la validation PUR-02 v4 (9/9 tests d'intégration réels + 17/17 unitaires, consolidation v3 22/22) ; section "Mise à jour 01/11/2026" ajoutée ; ALLM-05 et ALLM-16 mis à jour ; ALLM-16 action recommandée complétée (PUR-02 v4) ; vérifications en attente ALLM-16 mise à jour ; D6 révisée ; historique rouvert/réévalué complété. Base : v0.9 (28 oct 2026).*

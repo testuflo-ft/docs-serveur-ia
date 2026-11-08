@@ -1,6 +1,6 @@
 # Livret Technique — Serveur IA Mac mini + Synology
 
-*Version 0.8 — 1er novembre 2026*
+*Version 0.9 — 8 novembre 2026*
 
 **Statuts utilisés dans ce document :**
 - ✅ Vérifié — constat direct, sortie de commande ou code examiné
@@ -604,13 +604,18 @@ La suppression physique est récursive mais la purge des index ne l'est pas. Sou
 
 **Action :** parcours récursif explicite avant suppression physique ; vérifier les rejets async ; tester avec arborescence imbriquée.
 
-**PUR-02 v4 — Statut correctif (2026-11-01) :** correctif candidat validé par 9/9 tests d'intégration SQLite réel + LanceDB réel. Points couverts :
+**PUR-02 v4e + fix#1b — Statut correctif (2026-11-05) :** candidat validé par 52/52 tests — 22 Suite A (unitaires), 16 Suite B (handler HTTP), 14 Suite C (sécurité chemins). Points couverts :
 - `purgeFolder()` avorte si un sous-répertoire est présent (UNSUPPORTED_FOLDER_ENTRY) → plus d'index orphelin (ALLM-16 corrigé, non déployé)
 - `purgeDocument()` : `_getWorkspacesStrict()` propage les erreurs SQL ; `normalizePath` appliqué avant toutes les opérations
 - `deleteDocumentFromNamespace()` : requête Prisma directe, erreurs SQL et LanceDB propagées
 - `removeDocuments()` : `_getStrict()` sans try/catch ; LanceDB avant SQL ; `prisma.$transaction([...])` pour atomicité SQL-SQL
+- Défaut D-2 (fix#1b) : vérification pré-normalisation → 400 `FOLDER_NAME_INVALID`
+- Codes d'erreur canoniques : `FOLDER_NAME_REQUIRED`, `FOLDER_NAME_INVALID`, `FOLDER_OUTSIDE_DOCUMENTS`, `FOLDER_PROTECTED`, `FOLDER_NOT_FOUND`
 - Limite L-1 (non-atomicité LanceDB/SQL) confirmée par S05 ; remédiation manuelle documentée
+- Contre-revue indépendante favorable (ChatGPT, 2026-11-04). Patch SHA-256 `86043b31…`.
 Voir section 14.22 et fichier `PUR-02-livraison.md`.
+
+**Compagnon LanceDB v4f (2026-11-08) :** anomalie dans `deleteDocumentFromNamespace()` v4 : retournait `false` pour les no-ops (namespace absent ou 0 vecteur). Dans `addDocuments()`, `vectorsRemoved = deleted !== false` → `DocumentVectors.delete()` non appelé → nettoyage SQL silencieusement sauté lors d'un rollback. `candidate-lance-index-v4f.js` corrige → `return true` pour no-ops. Impact sur PUR-02-E : aucun (retour ignoré dans `removeDocuments()`). Impact sur rollback `addDocuments()` : corrigé. 8/8 PASS. SHA-256 `8103f042…`. Voir section 14.22.
 
 ### 14.13 Plan de test consolidé — avant d'activer n8n
 
@@ -634,8 +639,8 @@ Voir section 14.22 et fichier `PUR-02-livraison.md`.
 | RAG-03B | Cache (ALLM-06) | JSON de document modifié en place (même `docpath`), retiré puis rajouté au workspace | Chunks conformes au nouveau contenu ; sinon cache périmé reproduit (risque ALLM-06 confirmé en pratique) | À exécuter |
 | RAG-04 | Import | Échec d'embedding/indexation simulé | Échec explicite, pas de faux `success: true` ; comparer avec le comportement 1.19.0 (propagation de `embedded.success`) | À exécuter |
 | RAG-05 | Cohérence | Échec SQL après insertion LanceDB | Retour arrière des vecteurs tenté (code amont) ou état de réparation signalé ; contrôler SQL, `DocumentVectors` et LanceDB | À exécuter |
-| PUR-01 | Purge | Purge dossier factice avec sous-dossiers | Pas de référence résiduelle non signalée dans SQL, `DocumentVectors`, LanceDB ou cache | Partiel en laboratoire [LAB] : purge récursive, dossier supprimé après succès et conservé après erreur simulée, échec simulé de `Document.removeDocuments` propagé ; vraie panne LanceDB/SQL non testée. **PUR-02 v4 (2026-11-01) : 9/9 tests d'intégration SQLite réel + LanceDB réel couvrent S01, S03-S05, S07-S09 (multi-docs, sous-répertoire, normalisation). Test HTTP de bout en bout restant.** |
-| PUR-02 | Contrat HTTP | `custom-documents`, dossier absent, chemin invalide/imbriqué | `protected`/`not_found`/`invalid` distincts ; aucun faux succès | Partiel en laboratoire [LAB] : 400 `INVALID_FOLDER_NAME` / `INVALID_FOLDER_PATH`, 403 `FOLDER_PROTECTED`, 404 `FOLDER_NOT_FOUND`, entrée symbolique rejetée (`UNSUPPORTED_FOLDER_ENTRY`) ; pas de test HTTP de bout en bout ; `partial_failure` non rapporté. **PUR-02 v4 (2026-11-01) : S04 (err LanceDB), S05 (err $transaction), S08 (sous-répertoire → abort) validés en intégration réelle.** |
+| PUR-01 | Purge | Purge dossier factice avec sous-dossiers | Pas de référence résiduelle non signalée dans SQL, `DocumentVectors`, LanceDB ou cache | Partiel en laboratoire [LAB] : purge récursive, dossier supprimé après succès et conservé après erreur simulée, échec simulé de `Document.removeDocuments` propagé ; vraie panne LanceDB/SQL non testée. **v4e + fix#1b (2026-11-05) : 52/52 PASS (22A+16B+14C) ; S01-S09 couverts ; test HTTP de bout en bout restant.** |
+| PUR-02 | Contrat HTTP | `custom-documents`, dossier absent, chemin invalide/imbriqué | `protected`/`not_found`/`invalid` distincts ; aucun faux succès | Candidat v4e + fix#1b [LAB] (05/11/2026) : 52/52 PASS (22A+16B+14C) ; `FOLDER_NAME_REQUIRED`, `FOLDER_NAME_INVALID`, `FOLDER_OUTSIDE_DOCUMENTS`, `FOLDER_PROTECTED`, `FOLDER_NOT_FOUND`, `UNSUPPORTED_FOLDER_ENTRY` ; tests traversée avec cible existante (C-11..C-14) ; pas de test HTTP de bout en bout ; `partial_failure` non rapporté. **Compagnon v4f (08/11/2026) :** `deleteDocumentFromNamespace()` → `true` pour no-ops ; 8/8 PASS ; sans impact sur PUR-02-E |
 | OPS-01 | Sauvegarde | Sauvegarde puis restauration isolée (dont l'archive `storage-anythingllm.tar.gz` du 25/10) | Restauration fonctionnelle et intégrité vérifiée | À exécuter |
 | OPS-02 | Protection | Protection activée en isolé (valeur `1`, puis valeur `0` : la présence seule suffit-elle ?) ; suppression d'un workspace factice par les trois routes (`/admin/workspaces/:id`, `/workspace/:slug`, `/v1/workspace/:slug`) | 403 « Workspace deletion is blocked by the system administrator. » ; workspace préservé | Production : test unitaire du middleware PASS (403, `next()` non appelé) [PROD] ; test HTTP authentifié par route non fait ; laboratoire : à exécuter |
 | DOS-01 | Limite HTTP | Inspection statique de l'image de laboratoire pour `/api/embed` | Code réellement présent documenté ; présence seule ne prouve pas l'activité | Inspection statique de l'image active rapportée le 25/10 [IMG] ; à rejouer sur l'image de laboratoire |
@@ -693,6 +698,12 @@ Voir section 14.22 et fichier `PUR-02-livraison.md`.
 - Consolidation tests (unité) : 22/22 PASS (17 PUR-02 + Swagger fix)
 - D7 : ALLM-06 ouvert
 - INT-19 : Option B — résultats individuels par opération
+
+**Mise à jour 2026-11-05 :**
+- **PUR-02 v4e + fix#1b** : contre-revue indépendante favorable (ChatGPT, 2026-11-04) ; défaut D-2 traité (fix#1b : vérification pré-normalisation, 400 `FOLDER_NAME_INVALID`) ; 52/52 PASS (22 Suite A + 16 Suite B + 14 Suite C) ; patch SHA-256 `86043b31…`. Candidat prêt pour essai isolé, non déployé.
+
+**Mise à jour 2026-11-08 :**
+- **Compagnon LanceDB v4f** : `candidate-lance-index-v4f.js` — `deleteDocumentFromNamespace()` retourne `true` pour les no-ops ; 8/8 PASS (L-01..L-05 + R-01..R-03) ; corrections audit ChatGPT (chemin portable, R-02 vrai test d'intégration) ; SHA `8103f042…`. Sans impact sur PUR-02-E (non déployé). Voir section 14.22.
 
 **Non testé :** exploitation effective de ces risques ; tous les tests de la matrice.
 
@@ -871,13 +882,13 @@ Dans `server/utils/files/multer.js`, `fileUploadStorage` (l.11-25) et `fileAPIUp
 
 ---
 
-### 14.22 PUR-02 v4 — Validation et livraison (2026-11-01)
+### 14.22 PUR-02 v4 / v4e+fix#1b / v4f — Validation et livraison
 
 #### Contexte
 
-Résolution des 5 défauts identifiés dans `purgeDocument` / `removeDocuments` / `deleteDocumentFromNamespace` (ALLM-16) : atomicité SQL+LanceDB, singleton `LanceDb.#connection`, ordonnancement, propagation d'erreurs, récursivité de `purgeFolder`. Le correctif v4 s'appuie sur des candidats distincts (`candidate-purgeDocument.js`, `candidate-documents.js`, `candidate-lance-index.js`).
+Résolution des 5 défauts identifiés dans `purgeDocument` / `removeDocuments` / `deleteDocumentFromNamespace` (ALLM-16) : atomicité SQL+LanceDB, singleton `LanceDb.#connection`, ordonnancement, propagation d'erreurs, récursivité de `purgeFolder`. Les correctifs s'appuient sur des candidats distincts (`candidate-purgeDocument.js`, `candidate-documents.js`, `candidate-lance-index.js`).
 
-#### Résultats de validation
+#### Résultats de validation — v4 (2026-11-01, base)
 
 | Suite | Résultat | Date |
 |---|---|---|
@@ -887,7 +898,7 @@ Résolution des 5 défauts identifiés dans `purgeDocument` / `removeDocuments` 
 
 Scénarios d'intégration couverts : S01 purge simple, S02 purge multi-documents, S03 workspace inconnu, S04 bug singleton (régression), S05 limite L-1 (non-atomicité résiduelle confirmée et documentée), S06 purge globale, S07 purge avec entrées invalides, S08 purge d'un sous-répertoire (abort conservateur), S09 suppression d'un document vecteur inexistant en LanceDB.
 
-#### Correctifs techniques
+#### Correctifs techniques — v4
 
 - **`_getWorkspacesStrict()`** : remplace `Workspace.where()` par `prisma.workspaces.findMany()` direct (lance sur erreur au lieu de retourner `null`).
 - **`_getStrict()`** (`candidate-documents.js`) : `prisma.workspace_documents.findFirst()` sans try/catch ; erreur DB propagée.
@@ -899,7 +910,7 @@ Scénarios d'intégration couverts : S01 purge simple, S02 purge multi-documents
 
 LanceDB est nettoyé *avant* que `$transaction` échoue → état transitoire partiel possible : rangées SQL préservées, vecteurs LanceDB déjà supprimés. Confirmé par S05. Non résolu dans v4 ; nécessite une révision architecturale séparée.
 
-#### SHA-256 du patch complet
+#### SHA-256 du patch complet v4
 
 ```
 0cba6a1da13800fdd92411f3f8e9f83c611a45a2c57e017b7ce2a4de0baa79de
@@ -907,7 +918,7 @@ LanceDB est nettoyé *avant* que `$transaction` échoue → état transitoire pa
 
 (Fichier `PUR-02-patch-complet.diff`, branche `docs/mise-a-jour-2026-11-01`)
 
-#### Candidats vérifiés (SHA-256)
+#### Candidats v4 vérifiés (SHA-256)
 
 | Fichier | SHA-256 |
 |---|---|
@@ -915,9 +926,70 @@ LanceDB est nettoyé *avant* que `$transaction` échoue → état transitoire pa
 | `candidate-documents.js` | `de9c5860…` |
 | `candidate-purgeDocument.js` | `15fc2ee1…` |
 
-#### Statut
+---
 
-**VALIDÉ en laboratoire** — non déployé. Essai isolé requis avant tout déploiement en production. Exporter les fichiers candidats du conteneur lab avant tout arrêt.
+#### v4e + fix#1b — Résultats de validation (2026-11-05)
+
+Contre-revue indépendante favorable (ChatGPT, 2026-11-04). Défaut D-2 traité dans fix#1b : vérification pré-normalisation, 400 `FOLDER_NAME_INVALID`. O-1 (`.` → 500) résolu.
+
+| Suite | Résultat | Date |
+|---|---|---|
+| 22 tests unitaires Suite A | **22/22 PASS** | 2026-11-05 |
+| 16 tests handler HTTP Suite B | **16/16 PASS** | 2026-11-05 |
+| 14 tests sécurité chemins Suite C (`normalizePath`/`isWithin` réels, dont C-11..C-14 traversée avec cible existante) | **14/14 PASS** | 2026-11-05 |
+| **Total** | **52/52 PASS** | 2026-11-05 |
+
+Codes d'erreur canoniques : `FOLDER_NAME_REQUIRED` (nom vide), `FOLDER_NAME_INVALID` (séparateurs, traversal), `FOLDER_OUTSIDE_DOCUMENTS` (traversée hors-racine), `FOLDER_PROTECTED`, `FOLDER_NOT_FOUND`.
+
+#### Candidats v4e + fix#1b (SHA-256)
+
+| Fichier | SHA-256 |
+|---|---|
+| `candidate-purgeDocument-v4e.js` | `90a21b04…` |
+| `candidate-documents.js` | `de9c5860…` |
+| `candidate-lance-index.js` | `c826f004…` |
+| Patch `PUR-02-E-purgeDocument-v4e-fix1b.patch` | `86043b316bb40bbee3a9cc706d756255bbded05e278e3033ee018f14b1dbd8aa` |
+
+**Statut v4e + fix#1b :** candidat prêt pour essai isolé, non déployé. ALLM-16 corrigé.
+
+---
+
+#### v4f — Compagnon LanceDB (2026-11-08)
+
+**Anomalie identifiée dans v4 :** `deleteDocumentFromNamespace()` retournait `false` pour deux cas no-op — namespace absent et 0 vecteur trouvé.
+
+**Impact dans `addDocuments()` :** `vectorsRemoved = deleted !== false` → si `false`, `DocumentVectors.delete()` non appelé → nettoyage SQL silencieusement sauté lors d'un rollback après échec de `workspace_documents.create()`.
+
+**Impact sur PUR-02-E :** aucun. Dans `removeDocuments()`, la valeur de retour de `deleteDocumentFromNamespace()` n'est pas utilisée ; seules les exceptions déclenchent un comportement différent.
+
+**Correctif v4f :** `candidate-lance-index-v4f.js` — deux cas corrigés :
+- Namespace absent → `return true` (au lieu de `return false`)
+- 0 vecteur trouvé → `return true` (au lieu de `return false`)
+
+**Tests `pur02-lance-v4f.test.js` — 8/8 PASS :**
+- Suite L (5 tests) : L-01 namespace absent → `true` ; L-02 0 vecteur → `true` ; L-03 suppression effective → `true`, `table.delete()` appelé ; L-04 erreur SQL → exception ; L-05 erreur LanceDB → exception.
+- Suite R (3 tests) : R-01 rollback, `deleteDocumentFromNamespace` stubbé `true` → `DocumentVectors.delete()` appelé ; R-02 vrai test d'intégration, vraie classe `LanceDb` v4f, `namespaceExists` simulé `false`, preuve que le code v4f a été traversé → `DocumentVectors.delete()` appelé ; R-03 contrôle négatif, exception LanceDB → `DocumentVectors.delete()` non appelé.
+
+Corrections appliquées sur suggestion audit ChatGPT : (1) chemin portable `path.resolve(__dirname, "candidate-documents.js")` ; (2) R-02 réécrit comme vrai test d'intégration.
+
+#### Candidats v4f (SHA-256)
+
+| Fichier | SHA-256 |
+|---|---|
+| `candidate-lance-index-v4f.js` | `8103f042a0fed63db1d6f79db61ceb6eef97687e87893bec9747abe1d2c9149f` |
+| `pur02-lance-v4f.test.js` | `832bb2d2dd34e02c77ff89c7cffcdc23aecd0f692ebba0f72eb81da42c488012` |
+
+SHA-256 vérifiés sur `correctif-PUR-02` par ChatGPT (08/11/2026).
+
+**Statut v4f :** non déployé. Statut PUR-02-E (v4e + fix#1b) inchangé — candidat prêt pour essai isolé, non déployé.
+
+---
+
+#### Statut global
+
+**v4e + fix#1b :** VALIDÉ en laboratoire — non déployé. Essai isolé requis avant tout déploiement en production. Exporter les fichiers candidats du conteneur lab avant tout arrêt.
+
+**v4f (compagnon) :** VALIDÉ en tests unitaires — non déployé. Sans impact sur le déploiement de PUR-02-E.
 
 Voir `PUR-02-livraison.md` pour le détail complet de livraison.
 
@@ -1044,7 +1116,8 @@ Toutes ces commandes sont en lecture seule. Elles ne prouvent pas la provenance 
 
 *Auteur : Florian — élaboré avec Claude et ChatGPT*
 *Sources : notes de passation ChatGPT (9, 11, 12 oct 2026) + conversations Claude oct 2026 + audit AnythingLLM oct 2026 + dossiers ChatGPT 23 oct 2026 + Plan-correctifs v0.4 (24 oct 2026) + passation ChatGPT du 25 oct 2026 + conclusions validées du 25 oct 2026 (21:37) + relecture du code amont par Claude le 25 oct 2026 (tag v1.17.0 et commit a5bb8b9)*
-*Version 0.8 — 1er novembre 2026*
+*Version 0.9 — 8 novembre 2026*
+*Changements v0.9 : mise à jour PUR-02 v4e + fix#1b (52/52 tests PASS, 22A+16B+14C, patch SHA `86043b31…`, contre-revue indépendante) manquant depuis v0.8 ; ajout compagnon LanceDB v4f (`candidate-lance-index-v4f.js`, SHA `8103f042…`, 8/8 PASS, L-01..L-05 + R-01..R-03) ; section 14.12 (statut v4e+fix#1b + v4f), 14.13 (matrice PUR-01, PUR-02), 14.15 (mises à jour 2026-11-05 et 2026-11-08), 14.22 (v4e+fix#1b, v4f) mis à jour. PUR-02-E non déployé — essai isolé requis. Base : v0.8 (1er nov 2026).*
 *Changements v0.8 : intégration de la validation PUR-02 v4 (9/9 tests d'intégration + 17/17 unitaires, consolidation v3 22/22) ; nouvelle section 14.22 (PUR-02 v4) ; section 7.4 mise à jour ; section 14.12 mise à jour (statut ALLM-16) ; matrice 14.13 mise à jour (PUR-01, PUR-02) ; section 14.15 mise à jour (milestone 2026-11-01). Non déployé — essai isolé requis. Base : v0.7 (28 oct 2026).*
 *Changements v0.7 : intégration du bilan ChatGPT du 28/10/2026 (étiquettes [PROD] et [LAB] ; ALLM-10 activé en production le 27/10, test unitaire seulement ; configuration `compose.yaml` ; états partiels dans la matrice ; correctifs de laboratoire INT-18 et INT-20/PUR-02 non validés ni déployés ; nouvelle section 14.21 ; items 6, 25, 29, 30 de la section 13 ; 15.4 mis à jour). Base : v0.6 (25 oct 2026).*
 *Changements v0.6 : légende des sources de preuve et numérotation canonique en tête ; sections 5.2, 7.1, 7.4, 11 mises à jour (version 1.19.0, retour arrière, versions de documents) ; section 13 : items 6, 7, 8, 16, 22, 23 révisés et items 25 à 28 ajoutés ; section 14 datée du 25 oct ; 14.8 (ALLM-10 : disponible, désactivée) et 14.9 (ALLM-12 : CP-3 non appliqué automatiquement, options A/B/C) réécrites ; 14.7 (ALLM-05), 14.10 (ALLM-14), 14.11 (ALLM-06 ouvert), 14.16 (DOS-02 corrigé et déployé, preuve statique) et 14.20 (RACE-01) mises à jour ; 14.13 : matrice portée à 32 identifiants (RAG-03A/B, SEC-10) ; 14.14 et 14.15 révisées ; 15.4 à 15.6 révisées (commande de version corrigée, commandes de lecture seule ajoutées). Base : v0.5 (24 oct 2026).*
