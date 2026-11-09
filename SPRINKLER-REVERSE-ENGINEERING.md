@@ -1811,6 +1811,73 @@ Ne pas qualifier de vulnérabilité confirmée ou exploitable sans preuve.
 
 ---
 
+### 9.14 Recherche réseau complémentaire : SSID, BSSID et adresse IP
+
+Les classes suivantes ont été examinées :
+
+- `network/NetworkMonitor.java`
+- `utility/DirectPairManager.java`
+- `utility/UtilityManager.java`
+- `Presenter/DeviceAddPresenter.java`
+
+#### `UtilityManager.java`
+
+Les méthodes suivantes ont été identifiées :
+
+- `getWifiSSID(Context)` : récupère le SSID via `WifiManager.getConnectionInfo()`.
+- `getWifiConnectedSSID(Context)` : récupère le SSID si le téléphone est connecté à un réseau Wi-Fi.
+- `getWifiConnectedBSSID(Context)` : récupère le BSSID du réseau Wi-Fi connecté.
+- `isConnectToWifi(Context)` : vérifie que la connexion active est de type Wi-Fi.
+
+**FAIT DÉMONTRÉ :** ces méthodes interrogent les informations de connexion Wi-Fi du téléphone. Elles ne récupèrent pas l'adresse IP du programmateur et ne réalisent pas de découverte de matériel sur le LAN.
+
+#### `NetworkMonitor.java`
+
+Cette classe surveille la connexion Wi-Fi du téléphone au moyen de `ConnectivityManager.registerNetworkCallback()`.
+
+Lors des événements `onAvailable()` et `onLost()`, elle vérifie le SSID courant à partir de `WifiManager.getConnectionInfo().getSSID()` et le compare au SSID cible fourni au constructeur.
+
+**FAIT DÉMONTRÉ :** `NetworkMonitor` surveille l'appartenance du téléphone à un réseau Wi-Fi identifié par son SSID. Il ne découvre pas les programmateurs, ne récupère pas leur adresse IP et n'envoie pas de requête HTTP à leur intention.
+
+Le SSID cible est un paramètre générique. Son utilisation pour surveiller spécifiquement le point d'accès du programmateur dépend des appels à cette classe.
+
+#### `DirectPairManager.java`
+
+Cette classe utilise les mécanismes Android de scan Wi-Fi, notamment `WifiManager.startScan()` et `getScanResults()`, puis compare les SSID détectés au SSID recherché.
+
+Sur Android 10 et versions ultérieures, elle utilise `WifiNetworkSpecifier` et `ConnectivityManager.bindProcessToNetwork()` pour associer le processus Android au réseau Wi-Fi sélectionné.
+
+**FAIT DÉMONTRÉ :** cette classe détecte et rejoint un réseau Wi-Fi par son SSID. Elle ne constitue pas un mécanisme de découverte de l'adresse IP du programmateur sur le réseau domestique.
+
+#### Recherche globale de mécanismes de découverte LAN
+
+Une recherche dans les sources Java a porté notamment sur :
+
+- `NsdManager` et les mécanismes NSD ;
+- `InetAddress`, `getByName()` et `getAllByName()` ;
+- `DatagramSocket` et `MulticastSocket` ;
+- les mécanismes broadcast ;
+- `255.255.255.255` ;
+- les adresses locales fixes de type `192.168.1.x`.
+
+Dans les sources examinées, le seul usage pertinent d'`InetAddress` retrouvé est la récupération de l'adresse IP fournie par le résultat ESPTouch dans `DeviceAddPresenter`.
+
+Aucun mécanisme classique de découverte LAN par mDNS/NSD, UDP, multicast, broadcast ou balayage d'une plage IP n'a été identifié dans cette recherche.
+
+Cette absence concerne uniquement les sources examinées de l'APK. Elle ne démontre pas l'absence de tels mécanismes dans le firmware du programmateur ou dans des composants qui n'auraient pas été couverts par la recherche.
+
+#### Conséquence pour la question du mode station
+
+Les éléments établissent désormais trois mécanismes distincts :
+
+1. ESPTouch fournit une adresse IP pendant le provisionnement ; l'application l'utilise pour interroger `/TYPE_BRAND` et `/feedback`.
+2. `DirectPairManager` et `NetworkMonitor` gèrent la connexion Wi-Fi du téléphone, essentiellement par SSID.
+3. Les opérations de lecture et d'écriture de configuration observées utilisent l'API locale en mode AP, ou le chemin distant dans les fonctions non-AP examinées.
+
+L'application ne fournit donc pas, dans les mécanismes étudiés, de preuve d'une découverte et d'un pilotage local permanent des programmateurs sur le LAN domestique.
+
+**QUESTION TOUJOURS OUVERTE :** le firmware expose-t-il les endpoints locaux sur son adresse IP en mode station ? Seul un examen complémentaire du code ou, ultérieurement et avec autorisation, un test matériel contrôlé pourra répondre à cette question.
+
 ## 10. Points restant à examiner et ordre de reprise
 
 ### Priorité 1 — API locale et mode station
@@ -1950,7 +2017,17 @@ Cette étape ne commencera qu'après compréhension suffisante du protocole loca
 | 09/11/2026 | `WifiDeviceRepo.java` | Chemins modernes locaux pour lecture `/TIME`, écriture `/Read128` et historique `/GetHistory` |
 | 09/11/2026 | Configuration réseau Mac mini | Mac relié au réseau domestique en Wi-Fi et au NAS par Ethernet direct ; NAS relié séparément au LAN |
 | 09/11/2026 | Analyse du chemin non-AP | Fonctions examinées utilisant le chemin cloud lorsque `device.isAp()` est faux ; disponibilité d'une API locale en station non démontrée |
-
+| 09/11/2026 | `WifiDevice.java` et schéma Room | Entité `WifiDevice` et table `wifi_devices` : nom, MAC, SSID, mot de passe et données binaires ; aucun champ IP identifié |
+| 09/11/2026 | `WifiDeviceDao_Impl.java` | Requêtes SQL de lecture, insertion, mise à jour et suppression ; aucune requête relative à une adresse IP |
+| 09/11/2026 | `SprinklerDB_Impl.java` | Schéma SQLite examiné ; aucune colonne IP identifiée dans les tables étudiées |
+| 09/11/2026 | `BaseDeviceViewModel$getDeviceDataFromAp$2.java` | Lecture AP : vérification `device.isAp()`, appel au dépôt local, extraction du champ JSON `response`, conversion en bytes puis parsing par `DataResult` |
+| 09/11/2026 | `WifiDeviceRepo.java` | Lecture AP par POST `/TIME` avec JSON contenant l'heure et le jour courant ; écriture AP par POST `/Read128` |
+| 09/11/2026 | `BaseDeviceViewModel$setDeviceDataToAp$2.java` | Écriture AP : envoi des données, contrôle du code de réponse, mise à jour du modèle et persistance locale après succès ; rollback en cas d'échec |
+| 09/11/2026 | `NetworkMonitor.java` | Surveillance du SSID Wi-Fi courant ; aucune découverte IP ou requête au programmateur |
+| 09/11/2026 | `DirectPairManager.java` | Scan et connexion à un réseau Wi-Fi par SSID ; aucune découverte de l'adresse IP du programmateur |
+| 09/11/2026 | `UtilityManager.java` | Récupération du SSID et du BSSID du Wi-Fi connecté au téléphone ; aucune récupération de l'IP du programmateur |
+| 09/11/2026 | Recherche réseau globale | Aucun mécanisme mDNS/NSD, UDP, multicast, broadcast ou balayage de plage IP identifié dans les sources Java examinées |
+| 09/11/2026 | Synthèse réseau | L'IP ESPTouch est utilisée pendant l'identification ; aucune persistance de cette IP dans `wifi_devices` n'a été identifiée ; API locale station toujours non démontrée |
 ---
 
 ## 12. Dernier état de l'analyse et point de reprise
@@ -2011,21 +2088,37 @@ Communications :
 
 ### 12.3 Prochaine étape immédiate
 
-**Rechercher dans le code comment l'adresse IP du programmateur est utilisée après l'identification ESPTouch, et déterminer si une voie HTTP locale existe en mode station.**
+Le volet de recherche statique sur la gestion Wi-Fi et la découverte réseau de l'application est désormais largement documenté.
 
-L'analyse doit rester statique et en lecture seule.
+Les classes examinées comprennent :
 
-La priorité est de suivre les usages de :
+- `DeviceAddPresenter.java`
+- `NetworkMonitor.java`
+- `DirectPairManager.java`
+- `UtilityManager.java`
+- `WifiDevice.java`
+- `WifiDeviceDao.java`
+- `WifiDeviceDao_Impl.java`
+- `SprinklerDB.java`
+- `SprinklerDB_Impl.java`
+- `WifiDeviceRepo.java`
+- `BaseDeviceViewModel.java`
+- `BaseDeviceViewModel$getDeviceDataFromAp$2.java`
+- `BaseDeviceViewModel$setDeviceDataToAp$2.java`
 
-- `SM_IDENTIFY_DEVICE`
-- `SM_DEVICE_FEEDBACK`
-- `getInetAddress()`
-- `getBssid()`
-- `getApDeviceSetting()`
-- `setApDeviceSetting()`
-- `device.isAp()`
+**Constat principal :** aucun mécanisme de découverte permanente des programmateurs par adresse IP sur le LAN n'a été identifié dans les sources examinées. L'IP obtenue par ESPTouch sert à l'identification initiale, mais aucune persistance de cette IP dans la base SQLite étudiée n'a été trouvée.
 
-Il faudra notamment examiner les autres méthodes de découverte et les chemins de communication des fonctions non-AP.
+La question prioritaire demeure l'exposition éventuelle de l'API locale en mode station.
+
+Prochaine investigation :
+
+1. Examiner les usages de `SprinklerCommand.java`.
+2. Relier les commandes d'arrosage aux chemins HTTP, BLE ou cloud.
+3. Rechercher les autres chemins non-AP dans les ViewModels et Presenters.
+4. Examiner les éventuelles références à une adresse IP ou à un hôte dans les autres modèles de données et préférences.
+5. Continuer à distinguer les limites de l'application Android de ce qui reste inconnu dans le firmware.
+
+L'analyse reste strictement statique et en lecture seule. Aucun test actif sur le programmateur n'est autorisé à ce stade.
 
 ### 12.4 Étape suivante après l'analyse du mode station
 
