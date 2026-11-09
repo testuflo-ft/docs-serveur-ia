@@ -181,7 +181,7 @@ Fichier :
 
 Éléments observés :
 
-~~~java
+```java
 new MqttClient(
     "tcp://210.61.46.162:2883",
     MqttClient.generateClientId(),
@@ -195,7 +195,7 @@ mqttMessage.setQos(1);
 mqttMessage.setRetained(true);
 
 getMqttClient().subscribe(topic);
-~~~
+```
 
 **FAITS DÉMONTRÉS :**
 
@@ -217,9 +217,9 @@ Fichier :
 
 Constante observée :
 
-~~~java
+```java
 PAIR_INFO = "%s/IOShop/Pair";
-~~~
+```
 
 La méthode `genPairInfoTopic()` renvoie ce motif.
 
@@ -270,15 +270,15 @@ Fichier :
 
 Domaine par défaut :
 
-~~~java
+```java
 TEST_SERVER_DOMAIN = "https://echo.ioshop.com.tw/LinkU/";
-~~~
+```
 
 Variable de domaine :
 
-~~~java
+```java
 mServerDomain = "";
-~~~
+```
 
 Une méthode `setServerDomain(String domain)` permet de modifier cette valeur.
 
@@ -306,10 +306,10 @@ Les chemins suivants sont définis dans `HttpUrlUtil.java` :
 
 Le code définit également :
 
-~~~java
+```java
 SM_DEVICE_FEEDBACK = "http://%s/feedback?NTP=%s&TIMEZONE=%s";
 SM_IDENTIFY_DEVICE = "http://%s/TYPE_BRAND";
-~~~
+```
 
 Ces deux URL suggèrent l'existence d'échanges HTTP locaux avec un appareil, mais leur utilisation effective reste à analyser.
 
@@ -327,24 +327,24 @@ Fichier :
 
 Appel observé :
 
-~~~java
+```java
 HttpUtil.getInstance().post(
     HttpUrlUtil.genUploadDeviceUrl(),
     HttpUrlUtil.genUploadDeviceContent(mac, name, timezone),
     PreferenceHelper.INSTANCE.getLoginToken(),
     true
 );
-~~~
+```
 
 Le JSON construit par `genUploadDeviceContent()` contient :
 
-~~~json
+```json
 {
   "mac": "...",
   "name": "...",
   "timezone": "..."
 }
-~~~
+```
 
 Constats :
 
@@ -419,15 +419,15 @@ Fichier :
 
 Méthode `getTempDevice()` :
 
-~~~java
+```java
 DataParserV2.convertDevice(this.data);
-~~~
+```
 
 Méthode `verifyCheckMark()` :
 
-~~~java
+```java
 this.data[127] == 83
-~~~
+```
 
 Le marqueur attendu à l'offset 127 est donc `0x53`, caractère ASCII `S`.
 
@@ -450,65 +450,209 @@ Le code Java utilise des octets signés lors du calcul de la somme. La reproduct
 **À VÉRIFIER :**
 
 - Valeur de `IOBody.BODY_SIZE`.
-- Correspondance exacte entre les 129 octets et les champs.
 - Nature et rôle précis du marqueur.
 - Reproduction exacte du checksum.
 - Format utilisé pour l'écriture et construction de `mSetting`.
 
----
+### 7.4 Structure exacte des 128 octets de données
 
-## 8. Analyse de DataParserV2.java
+Fichiers examinés :
+
+- `data/device/Device.java`
+- `data/device/Info.java`
+- `data/device/Command.java`
+
+Les méthodes `Device.setData()` et `Device.getData()` permettent maintenant de reconstituer précisément les quatre blocs qui composent les 128 octets.
+
+| Bloc | Offset de début | Taille | Offset de fin exclu |
+|---|---:|---:|---:|
+| Info | 0 | 48 | 48 |
+| Schedule | 48 | 66 | 114 |
+| ScheduleSetting | 114 | 6 | 120 |
+| Command | 120 | 8 | 128 |
+| Checksum | 128 | 1 | 129 |
+
+**FAIT DÉMONTRÉ :** les données utiles occupent 128 octets. Le checksum est ajouté en 129e position.
+
+### 7.5 Découpage dans Device.setData()
+
+La méthode `setData(byte[] data)` effectue les opérations suivantes :
+
+1. Copie 48 octets à partir de l'offset 0 dans un tableau destiné à `Info`.
+2. Passe ce tableau à `DataParserV2.getInfo()`.
+3. Copie 66 octets à partir de l'offset 48 dans un tableau destiné aux six programmes.
+4. Passe ce tableau à `DataParserV2.getSchedule()`.
+5. Copie 6 octets à partir de l'offset 114 dans `schedulesSetting`.
+6. Copie 8 octets à partir de l'offset 120 dans un tableau destiné à `Command`.
+7. Passe ce tableau à `DataParserV2.getCommand()`.
+
+La méthode ne lit pas l'octet 128 du checksum.
+
+### 7.6 Reconstruction dans Device.getData()
+
+La méthode `getData()` :
+
+1. Appelle `Info.toBytes()` pour reconstruire les 48 octets.
+2. Alloue un tableau de 66 octets pour les programmes.
+3. Parcourt la liste des programmes et copie chaque timer sérialisé sur 11 octets.
+4. Ajoute les 6 octets de `schedulesSetting`.
+5. Ajoute les 8 octets de `Command.toBytes()`.
+6. Ajoute le résultat de `calculateCheckSum()`.
+
+L'ordre de reconstruction est donc identique à celui du découpage.
+
+**FAIT DÉMONTRÉ :** `getData()` reconstruit un tableau de 129 octets.
+
+### 7.7 Calcul exact du checksum
 
 Fichier :
 
-`data/DataParserV2.java`
+`data/device/Device.java`
 
-La méthode `convertDevice(byte[] input)` découpe le tableau d'entrée en quatre zones successives :
+Méthode :
 
-1. `Info`
-2. `Schedule`
-3. `ScheduleSetting`
-4. `Command`
+`calculateCheckSum()`
 
-Les tailles sont récupérées dynamiquement depuis les classes `Device`, `Info` et `Command`.
+Le code reconstruit les quatre blocs :
 
-Le code construit ensuite un objet `Device` contenant ces différentes structures.
+- `Info.toBytes()`
+- Les 66 octets des six programmes.
+- `schedulesSetting`.
+- `Command.toBytes()`.
 
-### 8.1 Zone Info
+Il additionne ensuite les octets dans une variable Java de type `int` :
 
-La méthode `getInfo(byte[] input)` découpe la zone d'information dans l'ordre suivant :
+```java
+int i5 = 0;
 
-1. `updateTime`
-2. `voltage`
-3. `intervalState`
-4. `durationState`
-5. `addIntervalTime`
-6. `addDurationTime`
-7. `spinnerStatus`
-8. `specialIntervalTime`
-9. `rainDropStatus`
-10. `rainDropStopTime`
-11. `voltageStatus`
-12. `motorStatus`
-13. `runStatus`
-14. `nextSprinklingDiff`
-15. `firmware`
-16. `batteryMode`
-17. `nextSprinklingDiffHigh`
-18. `connectMode`
-19. `productSerialNumber`
+for (byte b : bArrPlus) {
+    i5 += b;
+}
 
-Les tailles de ces champs sont définies dans `data/device/Info.java`.
+return (byte) (i5 % 256);
+```
 
-Les noms suggèrent des informations de fonctionnement, de tension, d'état moteur, d'arrosage et de connexion. Leur interprétation exacte n'est pas encore établie.
+Formule conceptuelle :
 
-### 8.2 Zone Schedule
+\[
+C = \left(\sum_{i=0}^{127} b_i\right)\bmod 256
+\]
 
-La méthode `getSchedule(Product product, byte[] input)` parcourt la zone des programmes par blocs de taille `Device.scheduleSize`.
+**Attention à l'implémentation :** les éléments de type `byte` sont signés en Java. Lors de leur addition dans un `int`, les valeurs supérieures à 127 sont donc interprétées comme des valeurs négatives. Le calcul doit reproduire cette particularité, puis la conversion finale en `byte`.
 
-Chaque bloc commence par un octet de type, suivi d'un marqueur ou d'un champ de modèle.
+Le checksum est ajouté après les 128 octets. Il n'est pas inclus dans sa propre somme.
 
-Le code distingue deux structures.
+**FAIT DÉMONTRÉ :** la méthode `Device.calculateCheckSum()` calcule le checksum à partir des quatre blocs reconstruits.
+
+### 7.8 Constante headSize
+
+`Device.java` expose également :
+
+`headSize = 40`
+
+Cependant, cette constante n'intervient pas dans les méthodes `setData()`, `getData()` et `calculateCheckSum()` examinées.
+
+**À VÉRIFIER :** retrouver toutes ses références avant de lui attribuer une fonction. Il ne faut pas conclure qu'il existe un en-tête de 40 octets dans le paquet de 129 octets.
+
+---
+
+## 8. Analyse des structures binaires
+
+### 8.1 Classe Info : 48 octets
+
+Fichier :
+
+`data/device/Info.java`
+
+La classe contient 19 tableaux d'octets. La méthode `toBytes()` utilise un `ByteBuffer` et place ces tableaux successivement, dans l'ordre suivant :
+
+```java
+byteBufferAllocate.put(this._updateTime);
+byteBufferAllocate.put(this._voltage);
+byteBufferAllocate.put(this._intervalState);
+byteBufferAllocate.put(this._durationState);
+byteBufferAllocate.put(this._addIntervalTime);
+byteBufferAllocate.put(this._addDurationTime);
+byteBufferAllocate.put(this._spinnerStatus);
+byteBufferAllocate.put(this._specialIntervalTime);
+byteBufferAllocate.put(this._rainDropStatus);
+byteBufferAllocate.put(this._rainDropStopTime);
+byteBufferAllocate.put(this._voltageStatus);
+byteBufferAllocate.put(this._motorStatus);
+byteBufferAllocate.put(this._runStatus);
+byteBufferAllocate.put(this._nextSprinklingDiff);
+byteBufferAllocate.put(this._firmware);
+byteBufferAllocate.put(this._batteryMode);
+byteBufferAllocate.put(this._nextSprinklingDiffHigh);
+byteBufferAllocate.put(this._connectMode);
+byteBufferAllocate.put(this._productSerialNumber);
+```
+
+Les tailles observées permettent d'établir la table suivante :
+
+| Offset global | Offset dans Info | Taille | Champ |
+|---|---:|---:|---|
+| 0–9 | 0–9 | 10 | `_updateTime` |
+| 10–12 | 10–12 | 3 | `_voltage` |
+| 13–15 | 13–15 | 3 | `_intervalState` |
+| 16–18 | 16–18 | 3 | `_durationState` |
+| 19–21 | 19–21 | 3 | `_addIntervalTime` |
+| 22–24 | 22–24 | 3 | `_addDurationTime` |
+| 25 | 25 | 1 | `_spinnerStatus` |
+| 26–28 | 26–28 | 3 | `_specialIntervalTime` |
+| 29 | 29 | 1 | `_rainDropStatus` |
+| 30–33 | 30–33 | 4 | `_rainDropStopTime` |
+| 34 | 34 | 1 | `_voltageStatus` |
+| 35 | 35 | 1 | `_motorStatus` |
+| 36 | 36 | 1 | `_runStatus` |
+| 37–40 | 37–40 | 4 | `_nextSprinklingDiff` |
+| 41–43 | 41–43 | 3 | `_firmware` |
+| 44 | 44 | 1 | `_batteryMode` |
+| 45 | 45 | 1 | `_nextSprinklingDiffHigh` |
+| 46 | 46 | 1 | `_connectMode` |
+| 47 | 47 | 1 | `_productSerialNumber` |
+
+**FAITS DÉMONTRÉS :**
+
+- `Info` occupe 48 octets.
+- Les 19 champs sont assemblés dans l'ordre indiqué.
+- Les tableaux d'octets sont copiés directement dans le `ByteBuffer`.
+- Aucun séparateur ni en-tête supplémentaire n'est ajouté par `Info.toBytes()`.
+
+Les getters de `Info` convertissent plusieurs tableaux en valeurs métier : tension, durées, états, prochain arrosage, firmware, etc.
+
+**À VÉRIFIER :**
+
+- La représentation numérique de chaque champ.
+- Le sens des bits et des valeurs d'état.
+- L'éventuel encodage temporel.
+- Les relations entre les champs et les variantes matérielles.
+- La correspondance exacte entre les valeurs décodées et les informations affichées dans l'application.
+
+### 8.2 Classe Schedule : 66 octets
+
+La zone Schedule commence à l'offset 48 et occupe 66 octets.
+
+La taille d'un programme est :
+
+`Device.scheduleSize = 11`
+
+Le total est :
+
+`Device.scheduleTotalSize = 11 × 6 = 66`
+
+Il existe donc six emplacements de programme de 11 octets chacun.
+
+La méthode `Device.getData()` reconstruit ces six blocs à partir des timers présents dans la liste `schedules`.
+
+Elle distingue deux types :
+
+- `Schedule.Normal`
+- `Schedule.Special`
+
+Chaque timer fournit un tableau de 11 octets via `toBytes()`.
+
+La méthode `DataParserV2.getSchedule()` distingue également les deux structures.
 
 #### Programme spécial
 
@@ -533,47 +677,144 @@ Les champs extraits sont :
 2. Durée.
 3. Temps d'arrosage.
 
-Les tailles des champs sont définies dans :
+**FAITS DÉMONTRÉS :**
 
-- `data/device/schedule/SpecialTimer.java`
+- Six emplacements de programme.
+- Onze octets par emplacement.
+- Soixante-six octets au total.
+- Deux types de structure : `Normal` et `Special`.
+- Le marqueur `0x53` au deuxième octet distingue le programme spécial dans le code examiné.
+
+**À VÉRIFIER :**
+
+- La signification exacte de chaque octet.
+- Les règles de conversion des heures et durées.
+- La signification des champs de semaines et d'intervalle.
+- Le traitement des emplacements de programme vides.
+- Les éventuelles différences entre les variantes A101W et A113W.
+
+Classes à examiner :
+
 - `data/device/schedule/NormalTimer.java`
+- `data/device/schedule/SpecialTimer.java`
+- `types/Schedule`
 
-Le nombre exact de programmes et la signification de tous les octets restent à confirmer.
+### 8.3 Zone ScheduleSetting : 6 octets
 
-### 8.3 Zone ScheduleSetting
+Cette zone commence à l'offset 114 et se termine à l'offset 119 inclus.
 
-Après la zone des programmes, `convertDevice()` copie une zone de taille :
+Elle est copiée directement dans le tableau :
 
-`Device.getScheduleSettingSize()`
+`Device.schedulesSetting`
 
-Cette zone est conservée sous forme de tableau d'octets dans l'objet `Device`.
+La méthode `Device.getData()` réinjecte ce tableau tel quel lors de la reconstruction.
 
-Sa structure interne reste à examiner.
+**FAIT DÉMONTRÉ :** cette zone occupe six octets et est conservée séparément des objets Schedule.
 
-### 8.4 Zone Command
+**À VÉRIFIER :** structure interne et signification des six octets.
 
-La méthode `getCommand(byte[] input)` découpe la zone de commande dans l'ordre suivant :
+### 8.4 Classe Command : 8 octets
 
-1. `stopSwitch`
-2. `spinnerSwitch`
-3. `rainDropSwitch`
-4. `firmwareUpdate`
-5. `wifiUpdate`
-6. `batteryModeSwitch`
-7. `sprinkleSwitch`
-8. `checkMark`
+Fichier :
 
-Les tailles sont définies dans `data/device/Command.java`.
+`data/device/Command.java`
 
-Les noms suggèrent des commandes ou états liés à l'arrêt, à la rotation, à la pluie, au firmware, au Wi-Fi, au mode batterie et à l'arrosage. Leur sémantique opérationnelle doit être vérifiée dans les méthodes d'accès et les classes qui construisent les commandes.
+La méthode `toBytes()` assemble huit tableaux d'un octet dans l'ordre suivant :
 
-### 8.5 Limite de l'analyse actuelle
+```java
+byteBufferAllocate.put(this._runSwitch);
+byteBufferAllocate.put(this._spinnerSwitch);
+byteBufferAllocate.put(this._rainDropSwitch);
+byteBufferAllocate.put(this._firmwareUpdate);
+byteBufferAllocate.put(this._wifiUpdate);
+byteBufferAllocate.put(this._batteryModeSwitch);
+byteBufferAllocate.put(this._sprinkleSwitch);
+byteBufferAllocate.put(this._checkMark);
+```
 
-`DataParserV2` est un parseur : il montre comment les octets reçus sont découpés et transformés en objets.
+Table des offsets :
 
-Il ne démontre pas, à lui seul, comment l'application construit les octets destinés à être envoyés au programmateur.
+| Offset dans Command | Offset global | Champ interne |
+|---:|---:|---|
+| 0 | 120 | `_runSwitch` |
+| 1 | 121 | `_spinnerSwitch` |
+| 2 | 122 | `_rainDropSwitch` |
+| 3 | 123 | `_firmwareUpdate` |
+| 4 | 124 | `_wifiUpdate` |
+| 5 | 125 | `_batteryModeSwitch` |
+| 6 | 126 | `_sprinkleSwitch` |
+| 7 | 127 | `_checkMark` |
 
-La sérialisation inverse devra être recherchée dans les classes de commandes, de données et de timers.
+Valeurs par défaut observées :
+
+| Champ | Valeur |
+|---|---|
+| `_runSwitch` | `N` |
+| `_spinnerSwitch` | `N` |
+| `_rainDropSwitch` | `L` |
+| `_firmwareUpdate` | `N` |
+| `_wifiUpdate` | `N` |
+| `_batteryModeSwitch` | `-` |
+| `_sprinkleSwitch` | `-` |
+| `_checkMark` | `83` (`S`) |
+
+Les valeurs textuelles sont encodées en UTF-8 dans les setters examinés.
+
+**FAITS DÉMONTRÉS :**
+
+- `Command` occupe huit octets.
+- L'ordre des champs est celui du tableau ci-dessus.
+- Le dernier octet est le marqueur `S` dans la valeur par défaut observée.
+- L'octet global 127 est également vérifié par `DataResult.verifyCheckMark()`.
+
+**À VÉRIFIER :**
+
+- Les valeurs possibles de chaque champ.
+- La signification opérationnelle des lettres et caractères.
+- Les enums associés aux différents champs.
+- Les méthodes et chemins d'appel qui construisent ces commandes.
+- La différence éventuelle entre état courant et commande à envoyer.
+
+Attention : les noms des champs ne suffisent pas à établir leur sémantique opérationnelle.
+
+### 8.5 Méthodes de parsing : emplacement du fichier
+
+Fichier exact :
+
+`data/DataParserV2.java`
+
+Chemin local :
+
+`~/Sprinkler-JADX/sources/com/ioshop/sprinkler/data/DataParserV2.java`
+
+Une recherche ciblée a identifié les méthodes suivantes :
+
+| Méthode | Ligne observée |
+|---|---:|
+| `convertDevice()` | 30 environ |
+| `getHeader()` | méthode présente |
+| `getInfo()` | 65 |
+| `getSchedule()` | 147 |
+| `getCommand()` | 227 |
+
+La sortie de `grep` a également montré que `convertDevice()` appelle `getInfo()`, `getSchedule()` et `getCommand()`.
+
+**NOUVEL ÉLÉMENT À EXAMINER :** `getHeader()` apparaît dans les métadonnées de la classe et dans la structure du parseur. Son rôle doit être étudié directement dans le code. Il ne faut pas confondre cette méthode avec la constante `Device.headSize = 40`, dont l'usage reste non identifié.
+
+La recherche précédente a affiché une longue ligne `@Metadata` générée par Kotlin. Cette ligne contient des métadonnées de compilation et n'est pas le corps des méthodes. Pour la suite, privilégier `sed` sur des plages de lignes précises plutôt qu'un `grep` qui inclut cette annotation.
+
+### 8.6 Limite de l'analyse actuelle
+
+Le parseur et les méthodes de sérialisation permettent maintenant de reconstruire la disposition des blocs.
+
+Ils ne démontrent pas encore :
+
+- La signification complète de chaque octet.
+- Le protocole de transport local.
+- La manière dont une commande est effectivement envoyée au programmateur.
+- La correspondance entre une action de l'interface et les octets transmis.
+
+La sérialisation des timers et les chemins d'appel des commandes doivent encore être étudiés.
 
 ---
 
@@ -598,49 +839,53 @@ La présence de bibliothèques et de classes dédiées ne suffit pas à détermi
 
 ## 10. Points restant à examiner
 
-### Priorité 1 — Structure exacte des octets
+### Priorité 1 — Structure exacte des données
 
-- [ ] `data/device/Device.java`
-- [ ] `data/device/Info.java`
-- [ ] `data/device/Command.java`
-- [ ] `data/IOBody.java`
-- [ ] `data/IOHeader.java`
-- [ ] Tailles exactes des zones et offsets absolus.
-- [ ] Valeur et calcul exact du checksum.
-- [ ] Rôle des marqueurs `0x53`.
+- [x] `data/device/Device.java` : tailles, découpage et reconstruction.
+- [x] `data/device/Info.java` : ordre des champs et sérialisation des 48 octets.
+- [x] `data/device/Command.java` : ordre des champs et sérialisation des 8 octets.
+- [ ] `data/IOBody.java`.
+- [ ] `data/IOHeader.java`.
+- [x] Tailles et offsets des quatre zones principales.
+- [x] Formule du checksum dans `Device.calculateCheckSum()`.
+- [ ] Comparaison détaillée avec `DataResult.verifyCheckSum()`.
+- [ ] Rôle exact des marqueurs `0x53`.
+- [ ] Usage de `Device.headSize = 40`.
+- [ ] Rôle de `DataParserV2.getHeader()`.
 
 ### Priorité 2 — Programmation de l'arrosage
 
-- [ ] `NormalTimer.java`
-- [ ] `SpecialTimer.java`
-- [ ] `Schedule.java`
-- [ ] `DeviceTimer.java`
-- [ ] `IOSprinklerData.java`
-- [ ] `DeviceCommand.java`
+- [ ] `NormalTimer.java`.
+- [ ] `SpecialTimer.java`.
+- [ ] `Schedule.java`.
+- [ ] `DeviceTimer.java`.
+- [ ] `IOSprinklerData.java`.
+- [ ] `DeviceCommand.java`.
 - [ ] Construction et sérialisation des données écrites.
 - [ ] Relation entre les programmes et les canaux/vannes.
 
 ### Priorité 3 — Commandes
 
-- [ ] `SprinklerCommand.java`
+- [ ] `SprinklerCommand.java`.
 - [ ] Méthodes de construction des commandes.
 - [ ] Chemins d'appel depuis les ViewModels et Presenters.
 - [ ] Signification des champs de la zone `Command`.
+- [ ] Valeurs et enums associés aux commandes.
 
 ### Priorité 4 — Réseau local
 
-- [ ] `GetApDeviceSettingTask.java`
-- [ ] `SetApDeviceSettingTask.java`
-- [ ] `HttpAPUrl.java`
-- [ ] `HttpHelper.java`
-- [ ] `HttpUtil.java`
+- [ ] `GetApDeviceSettingTask.java`.
+- [ ] `SetApDeviceSettingTask.java`.
+- [ ] `HttpAPUrl.java`.
+- [ ] `HttpHelper.java`.
+- [ ] `HttpUtil.java`.
 - [ ] Endpoints locaux et mode point d'accès.
 - [ ] `SM_DEVICE_FEEDBACK`.
 - [ ] `SM_IDENTIFY_DEVICE`.
 
 ### Priorité 5 — Bluetooth
 
-- [ ] `BLEService.java`
+- [ ] `BLEService.java`.
 - [ ] UUID des services et caractéristiques.
 - [ ] Format des messages BLE.
 - [ ] Commandes et réponses.
@@ -676,41 +921,54 @@ La présence de bibliothèques et de classes dédiées ne suffit pas à détermi
 | 09/11/2026 | `UploadDeviceTask.java` | Enregistrement HTTP du matériel avec MAC, nom, fuseau horaire et jeton |
 | 09/11/2026 | `GetDeviceSettingTask.java` | Réponse binaire de 129 octets reconnue |
 | 09/11/2026 | `DataResult.java` | Marqueur à l'offset 127 et checksum à l'offset 128 |
-| 09/11/2026 | `DataParserV2.java` | Découpage en Info, Schedule, ScheduleSetting et Command |
+| 09/11/2026 | `DataParserV2.java` | Méthodes `convertDevice`, `getHeader`, `getInfo`, `getSchedule` et `getCommand` repérées |
+| 09/11/2026 | `Device.java` | Découpage et reconstruction des 128 octets de données établis |
+| 09/11/2026 | `Device.java` | Calcul du checksum sur les 128 octets reconstruit |
+| 09/11/2026 | `Info.java` | Ordre exact des 19 champs et offsets des 48 octets établis |
+| 09/11/2026 | `Command.java` | Ordre exact des 8 champs et offsets globaux 120–127 établis |
 
 ---
 
 ## 12. Dernier état de l'analyse
 
-**Dernière classe examinée :** `data/DataParserV2.java`
-
-**Dernière découverte :** la configuration binaire de 129 octets est découpée en structures `Info`, `Schedule`, `ScheduleSetting` et `Command`.
-
-Les noms et l'ordre des champs sont identifiés, mais leurs tailles et offsets absolus ne sont pas encore établis.
-
-### Prochaine étape
-
-Lire les classes qui définissent les tailles des champs et les structures :
+**Dernières classes examinées :**
 
 - `data/device/Device.java`
 - `data/device/Info.java`
 - `data/device/Command.java`
 
+**Dernière méthode examinée dans chacune :**
+
+- `Device.setData()`
+- `Device.getData()`
+- `Device.calculateCheckSum()`
+- `Info.toBytes()`
+- `Command.toBytes()`
+
+**Dernières découvertes :**
+
+1. La structure des données utiles est de 128 octets.
+2. Le paquet complet, checksum compris, est de 129 octets.
+3. Les quatre zones sont identifiées avec leurs offsets absolus.
+4. Les 48 octets de `Info` sont documentés champ par champ.
+5. Les 66 octets de `Schedule` correspondent à six blocs de 11 octets.
+6. Les 6 octets de `ScheduleSetting` sont identifiés, mais leur structure interne reste inconnue.
+7. Les 8 octets de `Command` sont documentés champ par champ.
+8. Le checksum est calculé sur les 128 octets reconstruits, avec l'arithmétique signée des `byte` Java.
+9. `Device.headSize = 40` existe, mais son utilisation reste inconnue.
+10. `DataParserV2.getHeader()` a été repérée et doit être examinée.
+
+### Prochaine étape
+
+Examiner directement le début de `DataParserV2.java`, notamment `convertDevice()` et `getHeader()`, puis poursuivre avec `getInfo()`.
+
 Commande préparée :
 
-~~~bash
+```bash
 SRC="$HOME/Sprinkler-JADX/sources/com/ioshop/sprinkler"
 
-for F in \
-  data/device/Device.java \
-  data/device/Info.java \
-  data/device/Command.java
-do
-  echo
-  echo "========== $F =========="
-  sed -n '1,320p' "$SRC/$F"
-done
-~~~
+sed -n '1,145p' "$SRC/data/DataParserV2.java"
+```
 
 Attendre et analyser le résultat avant toute nouvelle commande.
 
