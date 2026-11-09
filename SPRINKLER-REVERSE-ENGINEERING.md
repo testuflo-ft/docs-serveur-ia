@@ -2,44 +2,84 @@
 
 **Dernière mise à jour :** 9 novembre 2026  
 **Statut :** analyse statique de l'APK Android  
-**Référentiel :** ce document est la source de référence du projet.
+**Référentiel :** document cumulatif de référence du projet.
 
-Objectif : comprendre les protocoles et les structures de données du programmateur Sprinkler afin d'étudier une intégration indépendante, notamment avec Home Assistant.
+Objectif : comprendre les protocoles, les structures de données et les mécanismes de commande des programmateurs Sprinkler afin d'étudier une intégration locale et indépendante, notamment avec Home Assistant.
 
 ---
 
 ## 1. Objectif et règles de travail
 
-L'objectif est de déterminer si le programmateur Sprinkler, notamment les modèles évoqués A101W et A113W, peut être piloté ou intégré sans dépendre exclusivement de l'application mobile ou du service cloud du fabricant.
+### 1.1 Objectif fonctionnel
 
-Axes d'investigation :
+L'utilisateur possède un programmateur **A113W**. L'objectif à terme est d'étudier le pilotage de ce programmateur et d'un second programmateur depuis une installation Home Assistant, sans dépendre obligatoirement de l'application mobile Sprinkler ni du serveur d'authentification du fabricant.
+
+Architecture envisagée, sous réserve de faisabilité technique :
+
+```text
+Accès utilisateur
+       |
+       v
+     Homer
+       |
+       v
+Home Assistant
+       |
+       +------ communication locale ------ A113W
+       |
+       +------ communication locale ------ second programmateur
+```
+
+Homer reste le portail d'accès. Home Assistant assure l'interface de commande et les automatisations.
+
+L'accès distant doit pouvoir s'appuyer sur l'infrastructure réseau déjà en place, sans faire transiter le trafic local par Tailscale lorsque les appareils communiquent directement sur le LAN.
+
+**Cet objectif d'autonomie est une exigence à vérifier, pas une capacité acquise.**
+
+Il faudra établir séparément :
+
+1. Si l'authentification initiale peut être effectuée sans serveur du fabricant.
+2. Si les commandes peuvent être envoyées directement au programmateur sur le réseau local.
+3. Si les états et programmes peuvent être lus localement.
+4. Si les programmes peuvent être créés et modifiés localement.
+5. Si le fonctionnement reste possible en cas d'indisponibilité du serveur d'authentification.
+6. Si Home Assistant peut assurer la gestion des deux programmateurs.
+7. Si l'accès distant peut être assuré par l'infrastructure existante, sans dépendance au cloud du fabricant.
+
+Il ne faudra jamais confondre une simple communication locale possible avec une autonomie complète : l'authentification, la lecture, la programmation et les commandes doivent être vérifiées séparément.
+
+### 1.2 Axes d'investigation
 
 - Communication Wi-Fi et réseau local.
 - Communication Bluetooth Low Energy (BLE).
-- Mécanisme de provisionnement Wi-Fi.
-- API HTTP distante et éventuelle API HTTP locale.
+- Provisionnement Wi-Fi.
+- API HTTP distante.
+- API HTTP locale et mode point d'accès.
 - MQTT.
 - Format binaire propriétaire de configuration.
-- Commandes d'arrosage et programmation.
+- Commandes d'arrosage.
+- Programmation normale et spéciale.
+- Authentification et dépendances au serveur du fabricant.
 - Possibilité d'une intégration Home Assistant.
 
-### Règles de sécurité
+### 1.3 Règles de sécurité
 
 L'analyse doit rester non destructive.
 
 - Ne pas modifier l'APK original.
 - Ne pas modifier l'application installée sur le téléphone.
-- Ne pas envoyer de commandes au programmateur.
+- Ne pas envoyer de commandes au programmateur pendant cette phase d'analyse.
 - Ne pas interroger le contrôleur ou le serveur distant pendant l'analyse statique.
 - Ne pas modifier le réseau ou la configuration du programmateur.
 - Privilégier les commandes de lecture seule sur les fichiers décompilés.
 - Ne procéder à aucun changement sur un système en production sans validation explicite.
+- Ne publier aucune modification GitHub sans validation explicite de l'utilisateur.
 
 Les commandes d'investigation sont exécutées sur macOS, dans un terminal zsh.
 
 La progression se fait une commande à la fois : chaque résultat est examiné avant de décider de la suite.
 
-### Convention de preuve
+### 1.4 Convention de preuve
 
 Chaque découverte doit être classée :
 
@@ -53,13 +93,13 @@ Ne pas transformer une hypothèse en fait au fil des conversations.
 
 ## 2. Environnement d'analyse
 
-### Machine
+### 2.1 Machine
 
 - Mac mini Apple Silicon, configuration indiquée : M5 Pro, 64 Go de RAM, SSD 512 Go.
 - Accès principalement par SSH.
 - Système macOS.
 
-### APK et décompilation
+### 2.2 APK et décompilation
 
 Répertoire de travail :
 
@@ -82,6 +122,12 @@ Inventaire déjà effectué :
 - 181 erreurs de décompilation signalées par JADX.
 
 L'APK original est conservé séparément. Les analyses portent sur les fichiers décompilés.
+
+### 2.3 Répertoire source utilisé dans les commandes
+
+```bash
+SRC="$HOME/Sprinkler-JADX/sources/com/ioshop/sprinkler"
+```
 
 ---
 
@@ -109,7 +155,7 @@ La présence de ces bibliothèques ne prouve pas à elle seule leur utilisation 
 | Parsing | `data/DataParser.java`, `data/DataParserV2.java` |
 | Données appareil | `data/device/Command.java`, `Device.java`, `Info.java`, `DataResult.java` |
 | Structure binaire | `data/IOBody.java`, `data/IOHeader.java` |
-| Données et commandes | `data/DeviceCommand.java`, `DeviceInfo.java`, `DeviceTimer.java`, `IOSprinklerData.java` |
+| Anciennes structures | `data/DeviceCommand.java`, `DeviceInfo.java`, `DeviceTimer.java`, `IOSprinklerData.java` |
 | HTTP et URL | `utility/HttpAPUrl.java`, `HttpUrlUtil.java`, `HttpUtil.java` |
 | Appairage | `utility/DirectPairManager.java` |
 | Tâches réseau | `task/HttpTask.java`, `GetDeviceListTask.java`, `GetDeviceSettingTask.java`, `SetDeviceSettingTask.java`, `GetApDeviceSettingTask.java`, `SetApDeviceSettingTask.java`, `UploadDeviceTask.java`, `LoginTask.java` |
@@ -141,7 +187,7 @@ Constats effectués dans le manifeste :
 - `targetSdkVersion="36"`
 - `android:usesCleartextTraffic="true"`
 
-### Permissions réseau et Wi-Fi
+### 4.1 Permissions réseau et Wi-Fi
 
 - `ACCESS_WIFI_STATE`
 - `INTERNET`
@@ -150,7 +196,7 @@ Constats effectués dans le manifeste :
 - `CHANGE_WIFI_MULTICAST_STATE`
 - `CHANGE_WIFI_STATE`
 
-### Permissions Bluetooth
+### 4.2 Permissions Bluetooth
 
 - `BLUETOOTH`
 - `BLUETOOTH_ADMIN` avec `maxSdkVersion="31"`
@@ -158,7 +204,7 @@ Constats effectués dans le manifeste :
 - `BLUETOOTH_SCAN`
 - `BLUETOOTH_CONNECT`
 
-### Permissions de localisation
+### 4.3 Permissions de localisation
 
 - `ACCESS_COARSE_LOCATION`
 - `ACCESS_FINE_LOCATION`
@@ -379,11 +425,210 @@ Autres tâches identifiées :
 
 **INTERPRÉTATION :** l'application utilise une API HTTP(S) distante pour gérer la liste des appareils et lire ou modifier leur configuration.
 
+Cela ne prouve pas que les commandes doivent nécessairement passer par ce serveur : l'API locale reste à examiner.
+
 ---
 
-## 7. Structure binaire de configuration : 129 octets
+## 7. Structures binaires : ancien format et format V2
 
-### 7.1 Longueur de réponse
+### 7.1 Deux générations de classes de données
+
+L'examen des fichiers montre deux ensembles de classes :
+
+**Ancien modèle :**
+
+- `DataParser.java`
+- `IOBody.java`
+- `IOHeader.java`
+- `DeviceInfo.java`
+- `DeviceTimer.java`
+- `DeviceCommand.java`
+
+**Modèle V2 :**
+
+- `DataParserV2.java`
+- `data/device/Device.java`
+- `data/device/Info.java`
+- `data/device/Command.java`
+- `data/device/schedule/NormalTimer.java`
+- `data/device/schedule/SpecialTimer.java`
+- `data/device/DataResult.java`
+
+Les deux modèles partagent plusieurs dimensions de données, mais diffèrent notamment dans la structure des commandes et le traitement du checksum.
+
+Il ne faut pas supposer que les deux formats sont interchangeables.
+
+### 7.2 Ancien modèle : IOBody
+
+Fichier :
+
+`data/IOBody.java`
+
+Constantes :
+
+```java
+public static final int BODY_CONFIG_SIZE = 6;
+public static final int BODY_SIZE = 129;
+```
+
+La classe contient :
+
+- `DeviceInfo info`
+- `List<DeviceTimer> timers`
+- `byte[] bodyConfig`
+- `DeviceCommand cmd`
+
+Le constructeur reçoit ces quatre éléments.
+
+`getBodyData()` concatène :
+
+1. `info.getContent()`
+2. Le contenu de chacun des timers.
+3. `new String(getBodyConfig())`
+4. `cmd.getContent()`
+
+La méthode `calCheckSum()` effectue :
+
+```java
+public int calCheckSum() {
+    int i = 0;
+
+    for (char c : getBodyData().toCharArray()) {
+        i += c;
+    }
+
+    return i % 128;
+}
+```
+
+**FAITS DÉMONTRÉS :**
+
+- `IOBody.BODY_SIZE = 129`.
+- `IOBody.BODY_CONFIG_SIZE = 6`.
+- Le corps ancien contient un objet d'information, une liste de timers, une configuration de six octets et un objet de commande.
+- Le checksum ancien est calculé sur les caractères de la chaîne renvoyée par `getBodyData()`, modulo 128.
+
+**À VÉRIFIER :**
+
+- Où le résultat de `calCheckSum()` est ajouté au corps.
+- Si les 129 octets incluent le checksum ou correspondent uniquement aux données.
+- L'encodage exact de `getContent()` dans chaque classe.
+- La relation entre ce checksum textuel et le checksum binaire du modèle V2.
+
+Ne pas confondre ce calcul avec celui de `Device.calculateCheckSum()`.
+
+### 7.3 Ancien modèle : DataParser
+
+Fichier :
+
+`data/DataParser.java`
+
+#### `getHeader(byte[] input)`
+
+Cette méthode copie :
+
+- 20 octets à partir de l'offset 0.
+- 12 octets à partir de l'offset 20.
+- 8 octets à partir de l'offset 32.
+
+Elle crée ensuite un objet `IOHeader`.
+
+#### `getBody(byte[] input)`
+
+Cette méthode découpe le tableau d'entrée de la façon suivante :
+
+| Offset | Taille | Objet |
+|---:|---:|---|
+| 0 | 48 | `DeviceInfo` |
+| 48 | 66 | Six `DeviceTimer` |
+| 114 | 6 | `bodyConfig` |
+| 120 | 9 | `DeviceCommand` |
+| **Total** | **129** | |
+
+Le parsing des commandes est effectué par `getDeviceCommand()`.
+
+#### `getDeviceCommand(byte[] input)`
+
+Cette méthode reçoit neuf octets et les distribue ainsi :
+
+| Offset local | Taille | Champ |
+|---:|---:|---|
+| 0 | 1 | premier champ byte |
+| 1 | 1 | deuxième champ byte |
+| 2 | 1 | troisième champ byte |
+| 3 | 2 | tableau de deux octets |
+| 5 | 1 | champ byte |
+| 6 | 1 | champ byte |
+| 7 | 1 | champ byte |
+| 8 | 1 | champ byte |
+
+Le constructeur appelé est :
+
+```java
+new DeviceCommand(b, b2, b3, bArr, b4, b5, input[7], input[8]);
+```
+
+Des logs mentionnent notamment `sprinkle` et `saveMode`, mais leur sémantique complète reste à confirmer.
+
+#### `getDeviceTimers(byte[] input)`
+
+La méthode parcourt les 66 octets par pas de 11.
+
+Pour chaque bloc :
+
+- 1 octet d'activation.
+- 3 octets de modèle.
+- 3 octets de durée.
+- 4 octets de temps d'arrosage.
+
+Elle crée un `DeviceTimer`.
+
+**FAITS DÉMONTRÉS :**
+
+- L'ancien parseur utilise six blocs de 11 octets.
+- Chaque timer ancien a une structure uniforme.
+- L'ancien parseur réserve neuf octets aux commandes.
+- La zone de configuration occupe six octets.
+
+### 7.4 Ancien modèle : IOHeader
+
+Fichier :
+
+`data/IOHeader.java`
+
+Constantes :
+
+```java
+HEADER_IDLE_SIZE = 8;
+HEADER_SIZE = 40;
+MAC_SIZE = 12;
+NAME_SIZE = 20;
+```
+
+La classe contient trois tableaux :
+
+- `deviceName`
+- `deviceMac`
+- `config`
+
+Le constructeur stocke les trois tableaux.
+
+`DataParser.getHeader()` les découpe ainsi :
+
+| Offset | Taille | Champ |
+|---:|---:|---|
+| 0 | 20 | `deviceName` |
+| 20 | 12 | `deviceMac` |
+| 32 | 8 | `config` |
+| **Total** | **40** | |
+
+Les méthodes Parcelable servent à transporter l'objet dans Android. Elles ne démontrent pas, à elles seules, le protocole réseau.
+
+**FAIT DÉMONTRÉ :** l'ancien modèle possède un en-tête de 40 octets, composé de trois champs de 20, 12 et 8 octets.
+
+Le sens des huit octets `config` reste inconnu.
+
+### 7.5 Format V2 : longueur et réponse
 
 Fichier :
 
@@ -394,36 +639,17 @@ Dans `parseHttpResponse(response)` :
 - Si `response.getBytes().length == 129`, la réponse est interprétée comme un `DeviceSettingResponse`.
 - Sinon, la réponse est traitée comme un JSON `SimpleTaskResponse`.
 
-La réponse binaire est soumise à une vérification de validité.
-
-### 7.2 DeviceSettingResponse
-
-Fichier :
-
-`data/DeviceSettingResponse.java`
-
-Le code :
-
-1. Récupère les octets de la réponse.
-2. Alloue un tableau de taille `IOBody.BODY_SIZE`.
-3. Copie les octets dans ce tableau.
-4. Construit un objet `DataResult`.
-
-La taille exacte de `IOBody.BODY_SIZE` reste à confirmer dans la classe `IOBody.java`.
-
-### 7.3 DataResult
-
 Fichier :
 
 `data/device/DataResult.java`
 
-Méthode `getTempDevice()` :
+`getTempDevice()` appelle :
 
 ```java
 DataParserV2.convertDevice(this.data);
 ```
 
-Méthode `verifyCheckMark()` :
+`verifyCheckMark()` vérifie :
 
 ```java
 this.data[127] == 83
@@ -431,7 +657,7 @@ this.data[127] == 83
 
 Le marqueur attendu à l'offset 127 est donc `0x53`, caractère ASCII `S`.
 
-Méthode `verifyCheckSum()` :
+`verifyCheckSum()` :
 
 - Copie les 128 premiers octets.
 - Calcule une somme sur ces octets.
@@ -440,29 +666,13 @@ Méthode `verifyCheckSum()` :
 
 Le code Java utilise des octets signés lors du calcul de la somme. La reproduction exacte de cet algorithme dans une implémentation indépendante devra respecter les conversions signées/non signées.
 
-**FAITS DÉMONTRÉS :**
-
-- Longueur attendue : 129 octets.
-- Octet 127 : marqueur `0x53`.
-- Octet 128 : checksum calculé à partir des 128 premiers octets, modulo 256.
-- Les données sont converties en structure `Device` par `DataParserV2`.
-
-**À VÉRIFIER :**
-
-- Valeur de `IOBody.BODY_SIZE`.
-- Nature et rôle précis du marqueur.
-- Reproduction exacte du checksum.
-- Format utilisé pour l'écriture et construction de `mSetting`.
-
-### 7.4 Structure exacte des 128 octets de données
+### 7.6 Format V2 : structure des 128 octets de données
 
 Fichiers examinés :
 
 - `data/device/Device.java`
 - `data/device/Info.java`
 - `data/device/Command.java`
-
-Les méthodes `Device.setData()` et `Device.getData()` permettent maintenant de reconstituer précisément les quatre blocs qui composent les 128 octets.
 
 | Bloc | Offset de début | Taille | Offset de fin exclu |
 |---|---:|---:|---:|
@@ -472,11 +682,11 @@ Les méthodes `Device.setData()` et `Device.getData()` permettent maintenant de 
 | Command | 120 | 8 | 128 |
 | Checksum | 128 | 1 | 129 |
 
-**FAIT DÉMONTRÉ :** les données utiles occupent 128 octets. Le checksum est ajouté en 129e position.
+**FAIT DÉMONTRÉ :** le modèle V2 reconstruit 128 octets de données utiles, puis ajoute un checksum en 129e position.
 
-### 7.5 Découpage dans Device.setData()
+### 7.7 Device.setData()
 
-La méthode `setData(byte[] data)` effectue les opérations suivantes :
+La méthode `setData(byte[] data)` :
 
 1. Copie 48 octets à partir de l'offset 0 dans un tableau destiné à `Info`.
 2. Passe ce tableau à `DataParserV2.getInfo()`.
@@ -488,7 +698,7 @@ La méthode `setData(byte[] data)` effectue les opérations suivantes :
 
 La méthode ne lit pas l'octet 128 du checksum.
 
-### 7.6 Reconstruction dans Device.getData()
+### 7.8 Device.getData()
 
 La méthode `getData()` :
 
@@ -499,11 +709,9 @@ La méthode `getData()` :
 5. Ajoute les 8 octets de `Command.toBytes()`.
 6. Ajoute le résultat de `calculateCheckSum()`.
 
-L'ordre de reconstruction est donc identique à celui du découpage.
-
 **FAIT DÉMONTRÉ :** `getData()` reconstruit un tableau de 129 octets.
 
-### 7.7 Calcul exact du checksum
+### 7.9 Calcul du checksum V2
 
 Fichier :
 
@@ -542,21 +750,83 @@ C = \left(\sum_{i=0}^{127} b_i\right)\bmod 256
 
 Le checksum est ajouté après les 128 octets. Il n'est pas inclus dans sa propre somme.
 
-**FAIT DÉMONTRÉ :** la méthode `Device.calculateCheckSum()` calcule le checksum à partir des quatre blocs reconstruits.
+### 7.10 Incohérence à résoudre : 128, 129 et enregistrement avec en-tête
 
-### 7.8 Constante headSize
+Fichier :
 
-`Device.java` expose également :
+`data/device/Device.java`
 
-`headSize = 40`
+Les constantes observées sont :
 
-Cependant, cette constante n'intervient pas dans les méthodes `setData()`, `getData()` et `calculateCheckSum()` examinées.
+- `headSize = 40`
+- `totalSize = 128`
 
-**À VÉRIFIER :** retrouver toutes ses références avant de lui attribuer une fonction. Il ne faut pas conclure qu'il existe un en-tête de 40 octets dans le paquet de 129 octets.
+La classe `Device.getData()` renvoie pourtant 129 octets, checksum compris.
+
+Fichier :
+
+`task/DeviceListResponse.java`
+
+Le constructeur procède ainsi :
+
+```java
+int headSize = Device.INSTANCE.getHeadSize();
+byte[] bArr = new byte[headSize];
+System.arraycopy(bytes, i, bArr, 0, headSize);
+
+IOHeader header = DataParserV2.getHeader(bArr);
+
+int headSize2 = Device.INSTANCE.getHeadSize() + i;
+int totalSize = Device.INSTANCE.getTotalSize();
+byte[] bArr2 = new byte[totalSize];
+System.arraycopy(bytes, headSize2, bArr2, 0, totalSize);
+
+Device deviceConvertDevice = DataParserV2.convertDevice(bArr2);
+```
+
+Le code :
+
+- Copie 40 octets d'en-tête.
+- Appelle `DataParserV2.getHeader()`.
+- Copie ensuite `Device.totalSize`, soit 128 octets selon la constante observée.
+- Passe ces 128 octets à `DataParserV2.convertDevice()`.
+
+Le parseur V2 utilise les 128 premiers octets pour construire le Device et ne traite pas le checksum dans `convertDevice()`.
+
+**FAITS DÉMONTRÉS :**
+
+- `headSize` vaut 40.
+- `totalSize` vaut 128 dans `Device`.
+- `DeviceListResponse` copie 40 octets d'en-tête, puis 128 octets de données.
+- `Device.getData()` reconstruit 129 octets avec checksum.
+- `DataResult` traite séparément le checksum à l'offset 128.
+
+**À VÉRIFIER IMPÉRATIVEMENT :**
+
+- La valeur de `IOSprinklerData.SPRINKLE_DATA_SIZE`.
+- La longueur réelle des enregistrements parcourus par `DeviceListResponse`.
+- Si le checksum est absent de certains flux ou simplement ignoré par `convertDevice()`.
+- Si `totalSize` désigne les données sans checksum dans ce contexte.
+- Si la réponse de 129 octets de `GetDeviceSettingTask` et les enregistrements de `DeviceListResponse` sont deux formats de transport distincts.
+
+Ne pas affirmer que la taille d'un enregistrement complet est 169 octets avant d'avoir vérifié `SPRINKLE_DATA_SIZE`.
+
+### 7.11 Conclusion sur les formats
+
+Les deux modèles partagent les zones de 48 octets d'information, 66 octets de timers et 6 octets de configuration.
+
+Ils diffèrent notamment sur la zone de commandes :
+
+- Ancien parseur : 9 octets.
+- Parseur V2 : 8 octets.
+
+L'ancien modèle expose un `IOBody.BODY_SIZE` de 129 octets et un checksum textuel modulo 128. Le modèle V2 reconstruit 128 octets de données et ajoute un checksum binaire en 129e position.
+
+Il est possible que ces différences correspondent à deux générations de format ou à des contextes de transport différents. Cela reste à démontrer.
 
 ---
 
-## 8. Analyse des structures binaires
+## 8. Analyse détaillée des structures V2
 
 ### 8.1 Classe Info : 48 octets
 
@@ -588,29 +858,29 @@ byteBufferAllocate.put(this._connectMode);
 byteBufferAllocate.put(this._productSerialNumber);
 ```
 
-Les tailles observées permettent d'établir la table suivante :
+| Offset dans Info | Taille | Champ |
+|---:|---:|---|
+| 0–9 | 10 | `_updateTime` |
+| 10–12 | 3 | `_voltage` |
+| 13–15 | 3 | `_intervalState` |
+| 16–18 | 3 | `_durationState` |
+| 19–21 | 3 | `_addIntervalTime` |
+| 22–24 | 3 | `_addDurationTime` |
+| 25 | 1 | `_spinnerStatus` |
+| 26–28 | 3 | `_specialIntervalTime` |
+| 29 | 1 | `_rainDropStatus` |
+| 30–33 | 4 | `_rainDropStopTime` |
+| 34 | 1 | `_voltageStatus` |
+| 35 | 1 | `_motorStatus` |
+| 36 | 1 | `_runStatus` |
+| 37–40 | 4 | `_nextSprinklingDiff` |
+| 41–43 | 3 | `_firmware` |
+| 44 | 1 | `_batteryMode` |
+| 45 | 1 | `_nextSprinklingDiffHigh` |
+| 46 | 1 | `_connectMode` |
+| 47 | 1 | `_productSerialNumber` |
 
-| Offset global | Offset dans Info | Taille | Champ |
-|---|---:|---:|---|
-| 0–9 | 0–9 | 10 | `_updateTime` |
-| 10–12 | 10–12 | 3 | `_voltage` |
-| 13–15 | 13–15 | 3 | `_intervalState` |
-| 16–18 | 16–18 | 3 | `_durationState` |
-| 19–21 | 19–21 | 3 | `_addIntervalTime` |
-| 22–24 | 22–24 | 3 | `_addDurationTime` |
-| 25 | 25 | 1 | `_spinnerStatus` |
-| 26–28 | 26–28 | 3 | `_specialIntervalTime` |
-| 29 | 29 | 1 | `_rainDropStatus` |
-| 30–33 | 30–33 | 4 | `_rainDropStopTime` |
-| 34 | 34 | 1 | `_voltageStatus` |
-| 35 | 35 | 1 | `_motorStatus` |
-| 36 | 36 | 1 | `_runStatus` |
-| 37–40 | 37–40 | 4 | `_nextSprinklingDiff` |
-| 41–43 | 41–43 | 3 | `_firmware` |
-| 44 | 44 | 1 | `_batteryMode` |
-| 45 | 45 | 1 | `_nextSprinklingDiffHigh` |
-| 46 | 46 | 1 | `_connectMode` |
-| 47 | 47 | 1 | `_productSerialNumber` |
+Les offsets globaux correspondent aux mêmes valeurs, puisque `Info` commence à l'offset 0 du bloc V2.
 
 **FAITS DÉMONTRÉS :**
 
@@ -627,83 +897,363 @@ Les getters de `Info` convertissent plusieurs tableaux en valeurs métier : tens
 - Le sens des bits et des valeurs d'état.
 - L'éventuel encodage temporel.
 - Les relations entre les champs et les variantes matérielles.
-- La correspondance exacte entre les valeurs décodées et les informations affichées dans l'application.
+- Les correspondances avec les informations affichées dans l'application.
 
-### 8.2 Classe Schedule : 66 octets
+### 8.2 Identification des produits
 
-La zone Schedule commence à l'offset 48 et occupe 66 octets.
+Fichiers :
 
-La taille d'un programme est :
+- `enums/Product.java`
+- `DeviceType.java`
+- `data/device/Info.java`
 
-`Device.scheduleSize = 11`
+Valeurs observées dans `Product.java` :
 
-Le total est :
+| Produit logiciel | Identifiant |
+|---|---|
+| `ORIGINAL_701` | `"-"` |
+| `NEW_701` | `"1"` |
+| `VARIANT_701_A` | `"A"` |
+| `VARIANT_701_B` | `"B"` |
+| `P917` | `"7"` |
+| `P108` | `"8"` |
 
-`Device.scheduleTotalSize = 11 × 6 = 66`
+`DeviceType.java` contient les mêmes valeurs.
 
-Il existe donc six emplacements de programme de 11 octets chacun.
+`Info.getProductSerialNumber()` décode `_productSerialNumber` :
 
-La méthode `Device.getData()` reconstruit ces six blocs à partir des timers présents dans la liste `schedules`.
+- `"1"` → `NEW_701`
+- `"A"` → `VARIANT_701_A`
+- `"B"` → `VARIANT_701_B`
+- `"7"` → `P917`
+- Toute autre valeur → `ORIGINAL_701`
 
-Elle distingue deux types :
+**Anomalie démontrée :** l'identifiant `"8"` de `P108` n'est pas reconnu explicitement par cette méthode et tombe dans la branche `ORIGINAL_701`.
 
-- `Schedule.Normal`
-- `Schedule.Special`
+D'autres références à `P108` existent dans l'application, notamment dans `SprinkleTimeDialog`, `DeviceListAdapter`, des valeurs par défaut Bluetooth et `BLEList`.
 
-Chaque timer fournit un tableau de 11 octets via `toBytes()`.
-
-La méthode `DataParserV2.getSchedule()` distingue également les deux structures.
-
-#### Programme spécial
-
-Si le deuxième octet du bloc vaut 83 (`0x53`, ASCII `S`), le programme est construit comme un `SpecialTimer`.
-
-Les champs extraits sont :
-
-1. Modèle.
-2. Semaines.
-3. Heure de début.
-4. Heure de fin.
-5. Intervalle.
-6. Durée.
-
-#### Programme normal
-
-Dans les autres cas, le programme est construit comme un `NormalTimer`.
-
-Les champs extraits sont :
-
-1. Modèle.
-2. Durée.
-3. Temps d'arrosage.
-
-**FAITS DÉMONTRÉS :**
-
-- Six emplacements de programme.
-- Onze octets par emplacement.
-- Soixante-six octets au total.
-- Deux types de structure : `Normal` et `Special`.
-- Le marqueur `0x53` au deuxième octet distingue le programme spécial dans le code examiné.
+Des références à `P917` et aux variantes A/B existent également dans les ViewModels et activités.
 
 **À VÉRIFIER :**
 
-- La signification exacte de chaque octet.
-- Les règles de conversion des heures et durées.
-- La signification des champs de semaines et d'intervalle.
-- Le traitement des emplacements de programme vides.
-- Les éventuelles différences entre les variantes A101W et A113W.
+- Pourquoi `P108` n'est pas reconnu explicitement dans `Info.getProductSerialNumber()`.
+- Si cette méthode est ancienne ou incomplète.
+- La correspondance entre les identifiants logiciels et les références commerciales.
+- L'identifiant réellement transmis par l'A113W possédé par l'utilisateur.
 
-Classes à examiner :
+**Important :** la possession d'un A113W est confirmée, mais le code examiné ne permet pas encore d'établir à quel identifiant `Product` ce modèle correspond.
 
-- `data/device/schedule/NormalTimer.java`
-- `data/device/schedule/SpecialTimer.java`
-- `types/Schedule`
+### 8.3 Classe Schedule : 66 octets
 
-### 8.3 Zone ScheduleSetting : 6 octets
+La zone Schedule commence à l'offset 48 et occupe 66 octets.
+
+Constantes :
+
+- `Device.scheduleSize = 11`
+- `Device.scheduleTotalSize = 66`
+
+Il existe six emplacements de programme de 11 octets chacun.
+
+La méthode `DataParserV2.getSchedule()` parcourt les 66 octets par pas de 11.
+
+Pour chaque programme :
+
+- `input[i]` est l'octet d'activation.
+- Si `input[i + 1] == 83` (`0x53`, ASCII `S`), un `SpecialTimer` est créé.
+- Dans les autres cas, un `NormalTimer` est créé.
+
+La branche normale est sélectionnée pour toute valeur du deuxième octet différente de `83`. Cela ne démontre pas que toutes ces valeurs sont nécessairement `"N"`.
+
+#### Programme spécial
+
+La branche spéciale extrait :
+
+1. Activation : 1 octet.
+2. Modèle : 1 octet.
+3. Semaines : 1 octet.
+4. Heure de début : 2 octets.
+5. Heure de fin : 2 octets.
+6. Intervalle : 2 octets.
+7. Durée : 2 octets.
+
+Total : 11 octets.
+
+#### Programme normal
+
+La branche normale extrait :
+
+1. Activation : 1 octet.
+2. Modèle : 3 octets.
+3. Durée : 3 octets.
+4. Temps d'arrosage : 4 octets.
+
+Total : 11 octets.
+
+### 8.4 NormalTimer
+
+Fichier :
+
+`data/device/schedule/NormalTimer.java`
+
+Constantes :
+
+- `enabledSize = 1`
+- `modelSize = 3`
+- `durationTimeSize = 3`
+- `sprinkleTimeSize = 4`
+
+Constructeur :
+
+```java
+NormalTimer(
+    int index,
+    Product product,
+    byte enabled,
+    byte[] modelTime,
+    byte[] durationTime,
+    byte[] sprinkleTime
+)
+```
+
+Valeurs par défaut observées :
+
+- `defaultEnabledStatus = '-'`
+- `defaultModelSetting = "---"`
+- `defaultDredgingTime = "---"`
+- `defaultSprinkleTime = DeviceTimer.DEFAULT_SPRINKLE_TIME`
+
+Méthodes identifiées :
+
+- `setModeTime(byte[] value)`
+- `getExist()`
+- `getEnabled()`
+- `getDurationDayForWeek()`
+- `getDurationDay()`
+- `getWeeks()`
+- `getDurationTime()`
+- `getSprinkleTime()`
+- `reset()`
+- `setEnabled(boolean)`
+- `toBytes()`
+
+#### Activation
+
+Les méthodes de NormalTimer établissent :
+
+- `getExist()` renvoie vrai si `_enabled == 'Y'` ou `_enabled == 'N'`.
+- `getEnabled()` renvoie vrai uniquement si `_enabled == 'Y'`.
+- `setEnabled(true)` écrit `Y`.
+- `setEnabled(false)` écrit `N`.
+- `reset()` réinitialise l'état à `'-'`.
+
+Il existe donc trois états :
+
+| Valeur | Interprétation dans le code |
+|---|---|
+| `-` | Non défini / emplacement inexistant |
+| `N` | Programme existant, désactivé |
+| `Y` | Programme activé |
+
+#### Modèle et jours
+
+`isWeekModel()` examine le premier caractère de `_modelTime` :
+
+- Si le premier caractère est `D`, le programme est en mode durée.
+- Sinon, il est interprété comme un modèle hebdomadaire.
+
+En mode durée :
+
+- Le caractère 1 est lu par `getDurationDayForWeek()`.
+- Le caractère 2 est lu par `getDurationDay()` et converti en entier.
+
+En mode hebdomadaire :
+
+- Les deux caractères qui suivent le premier sont lus comme une valeur hexadécimale lorsqu'elle est valide.
+- Si la chaîne hexadécimale n'est pas valide, la méthode renvoie 0.
+
+`setWeeks(int week)` transforme les sept bits en une liste de sept indicateurs.
+
+Le modèle hebdomadaire observé est de la forme `Wxx`, où `xx` est une valeur hexadécimale.
+
+#### Durée
+
+Pour `Product.P917` :
+
+- Les trois octets ASCII sont interprétés comme une valeur hexadécimale.
+- Si l'entier obtenu est inférieur à 2048, il est multiplié par 10 secondes puis converti en heures, minutes et secondes.
+- Sinon, 2048 est soustrait, puis la valeur est décodée en minutes et secondes, les heures étant calculées par division par 60.
+- Le format retourné est `HH:MM'SS`.
+
+Pour les autres produits :
+
+- Les deux premiers caractères sont suivis d'une apostrophe puis du troisième caractère et d'un zéro.
+
+`setDurationTime(String)` écrit directement les octets UTF-8 de la chaîne.
+
+#### Temps d'arrosage
+
+`getSprinkleTime()` lit quatre caractères ASCII et renvoie `HH:MM`.
+
+#### Sérialisation
+
+`toBytes()` concatène :
+
+- 1 octet activation.
+- 3 octets modèle.
+- 3 octets durée.
+- 4 octets temps d'arrosage.
+
+Total : 11 octets.
+
+### 8.5 SpecialTimer
+
+Fichier :
+
+`data/device/schedule/SpecialTimer.java`
+
+Constantes :
+
+- `enabledSize = 1`
+- `modelSize = 1`
+- `weeksSize = 1`
+- `startTimeSize = 2`
+- `endTimeSize = 2`
+- `intervalTimeSize = 2`
+- `durationTimeSize = 2`
+
+Constructeur :
+
+```java
+SpecialTimer(
+    int index,
+    Product product,
+    byte enabled,
+    byte model,
+    byte weeks,
+    byte[] startTime,
+    byte[] endTime,
+    byte[] intervalTime,
+    byte[] durationTime
+)
+```
+
+Valeurs par défaut :
+
+- `defaultEnabledStatus = '-'`
+- `defaultModelSetting = '-'`
+- `defaultWeeks = '-'`
+- `defaultStartTime = "--"`
+- `defaultEndTime = "--"`
+- `defaultInterval = "--"`
+- `defaultDurationTime = "--"`
+
+#### Activation
+
+Même logique que `NormalTimer` :
+
+- `getExist()` vrai si `_enabled == 'Y'` ou `_enabled == 'N'`.
+- `getEnabled()` vrai uniquement si `_enabled == 'Y'`.
+- `setEnabled(true/false)` écrit `Y` / `N`.
+- `reset()` remet `_enabled` à `'-'`.
+
+#### Modèle
+
+`getModel()` renvoie la représentation décimale du byte `_model` via :
+
+```java
+String.valueOf((int) this._model)
+```
+
+La signification métier des valeurs du modèle reste à établir.
+
+#### Semaines
+
+`getWeeks()` convertit l'octet `_weeks` en sept indicateurs.
+
+`setWeeks(int)` affecte directement le byte.
+
+`convertToWeeks(int week)` renvoie une liste vide si `week == 0`, sinon sept indicateurs selon les masques :
+
+- 1
+- 2
+- 4
+- 8
+- 16
+- 32
+- 64
+
+#### Horaires
+
+`getStartTime()`, `getEndTime()`, `getInterval()` et `getDuration()` lisent deux octets numériques et soustraient 1 à chaque octet pour produire `HH:MM`.
+
+Les setters parsèment `HH:MM` et stockent l'heure et la minute augmentées de 1.
+
+Exemple :
+
+`06:30` → octets décimaux `7, 31`.
+
+#### Sérialisation
+
+`toBytes()` concatène :
+
+- 1 octet activation.
+- 1 octet modèle.
+- 1 octet semaines.
+- 2 octets heure de début.
+- 2 octets heure de fin.
+- 2 octets intervalle.
+- 2 octets durée.
+
+Total : 11 octets.
+
+### 8.6 Correspondance des jours de semaine
+
+Fichiers :
+
+- `fragment/SprinklerWeekSelectPage.java`
+- `fragment/NewSprinklerWeekSelectPage.java`
+
+Dans `updateAll()`, l'ordre des jours est :
+
+| Index | Jour | Bit |
+|---:|---|---:|
+| 0 | Monday | 0 |
+| 1 | Tuesday | 1 |
+| 2 | Wednesday | 2 |
+| 3 | Thursday | 3 |
+| 4 | Friday | 4 |
+| 5 | Saturday | 5 |
+| 6 | Sunday | 6 |
+
+L'ancien écran `getTotalWeek()` utilise :
+
+- Index 0 → 1.
+- Index 1 → 2.
+- Index 2 → 4.
+- Index 3 → 8.
+- Index 4 → 16.
+- Index 5 → 32.
+- Index 6 → 64.
+
+L'entier est encodé en deux caractères hexadécimaux majuscules, préfixés par `W`.
+
+Exemples :
+
+- Lundi seul : `W01`.
+- Lundi et mercredi : `W05`.
+- Tous les jours : `W7F`.
+
+`SpecialTimer` utilise directement un byte `_weeks`, avec le même ordre de bits.
+
+**FAIT DÉMONTRÉ :** bit 0 = lundi, bit 1 = mardi, ..., bit 6 = dimanche.
+
+Cette correspondance est confirmée par les deux écrans de sélection des jours et les méthodes de conversion des timers.
+
+### 8.7 Zone ScheduleSetting : 6 octets
 
 Cette zone commence à l'offset 114 et se termine à l'offset 119 inclus.
 
-Elle est copiée directement dans le tableau :
+Elle est copiée directement dans :
 
 `Device.schedulesSetting`
 
@@ -713,7 +1263,7 @@ La méthode `Device.getData()` réinjecte ce tableau tel quel lors de la reconst
 
 **À VÉRIFIER :** structure interne et signification des six octets.
 
-### 8.4 Classe Command : 8 octets
+### 8.8 Classe Command : 8 octets
 
 Fichier :
 
@@ -731,8 +1281,6 @@ byteBufferAllocate.put(this._batteryModeSwitch);
 byteBufferAllocate.put(this._sprinkleSwitch);
 byteBufferAllocate.put(this._checkMark);
 ```
-
-Table des offsets :
 
 | Offset dans Command | Offset global | Champ interne |
 |---:|---:|---|
@@ -756,7 +1304,7 @@ Valeurs par défaut observées :
 | `_wifiUpdate` | `N` |
 | `_batteryModeSwitch` | `-` |
 | `_sprinkleSwitch` | `-` |
-| `_checkMark` | `83` (`S`) |
+| `_checkMark` | 83 (`S`) |
 
 Les valeurs textuelles sont encodées en UTF-8 dans les setters examinés.
 
@@ -777,134 +1325,141 @@ Les valeurs textuelles sont encodées en UTF-8 dans les setters examinés.
 
 Attention : les noms des champs ne suffisent pas à établir leur sémantique opérationnelle.
 
-### 8.5 Méthodes de parsing : emplacement du fichier
-
-Fichier exact :
-
-`data/DataParserV2.java`
-
-Chemin local :
-
-`~/Sprinkler-JADX/sources/com/ioshop/sprinkler/data/DataParserV2.java`
-
-Une recherche ciblée a identifié les méthodes suivantes :
-
-| Méthode | Ligne observée |
-|---|---:|
-| `convertDevice()` | 30 environ |
-| `getHeader()` | méthode présente |
-| `getInfo()` | 65 |
-| `getSchedule()` | 147 |
-| `getCommand()` | 227 |
-
-La sortie de `grep` a également montré que `convertDevice()` appelle `getInfo()`, `getSchedule()` et `getCommand()`.
-
-**NOUVEL ÉLÉMENT À EXAMINER :** `getHeader()` apparaît dans les métadonnées de la classe et dans la structure du parseur. Son rôle doit être étudié directement dans le code. Il ne faut pas confondre cette méthode avec la constante `Device.headSize = 40`, dont l'usage reste non identifié.
-
-La recherche précédente a affiché une longue ligne `@Metadata` générée par Kotlin. Cette ligne contient des métadonnées de compilation et n'est pas le corps des méthodes. Pour la suite, privilégier `sed` sur des plages de lignes précises plutôt qu'un `grep` qui inclut cette annotation.
-
-### 8.6 Limite de l'analyse actuelle
-
-Le parseur et les méthodes de sérialisation permettent maintenant de reconstruire la disposition des blocs.
-
-Ils ne démontrent pas encore :
-
-- La signification complète de chaque octet.
-- Le protocole de transport local.
-- La manière dont une commande est effectivement envoyée au programmateur.
-- La correspondance entre une action de l'interface et les octets transmis.
-
-La sérialisation des timers et les chemins d'appel des commandes doivent encore être étudiés.
-
 ---
 
-## 9. Modèle provisoire des communications
+## 9. Architecture des communications et dépendance au cloud
 
-Les éléments actuellement observés permettent de distinguer trois couches :
+### 9.1 Couches actuellement démontrées
 
 | Couche | Fonction observée | État de preuve |
 |---|---|---|
 | MQTT distant | Découverte et appairage Wi-Fi | Démontré |
 | HTTP(S) distant | Enregistrement, liste des appareils, lecture/écriture de configuration | Démontré |
-| Structure binaire de 129 octets | Représentation de la configuration du programmateur | Démontré |
+| Structure binaire V2 | Représentation de la configuration | Démontré |
+| HTTP local | Endpoints suggérés par les constantes | Non vérifié |
+| BLE | Bibliothèques et classes présentes | Non vérifié |
 
-Deux autres voies restent à examiner :
+### 9.2 Ce que l'on sait de la dépendance au fabricant
 
-- HTTP local / mode point d'accès.
-- Bluetooth Low Energy.
+Le code examiné montre que l'application utilise le serveur distant pour :
 
-La présence de bibliothèques et de classes dédiées ne suffit pas à déterminer leur rôle exact ni leur disponibilité sur chaque modèle.
+- L'authentification utilisateur.
+- L'enregistrement des appareils.
+- La récupération de la liste des appareils.
+- La lecture de configuration.
+- L'écriture de configuration.
+
+Cela établit une dépendance de l'application à des services distants pour les opérations examinées.
+
+Cela ne démontre pas que le programmateur lui-même exige le serveur pour exécuter ses programmes ou accepter des commandes locales.
+
+### 9.3 Question centrale encore ouverte
+
+Il faut découvrir si l'application sait communiquer directement avec le programmateur sur le LAN ou en mode point d'accès, sans passer par les endpoints cloud.
+
+Les constantes suivantes sont des pistes :
+
+```java
+SM_DEVICE_FEEDBACK = "http://%s/feedback?NTP=%s&TIMEZONE=%s";
+SM_IDENTIFY_DEVICE = "http://%s/TYPE_BRAND";
+```
+
+Les classes suivantes doivent être examinées :
+
+- `HttpAPUrl.java`
+- `GetApDeviceSettingTask.java`
+- `SetApDeviceSettingTask.java`
+- `HttpHelper.java`
+- `HttpUtil.java`
+- `SprinklerCommand.java`
+
+Il faudra identifier les adresses IP utilisées, les méthodes HTTP, les corps de requête et les réponses attendues.
+
+**Aucune autonomie locale complète n'est encore démontrée.**
 
 ---
 
-## 10. Points restant à examiner
+## 10. Points restant à examiner et ordre de reprise
 
-### Priorité 1 — Structure exacte des données
+### Priorité 1 — Résoudre l'incohérence de taille
 
-- [x] `data/device/Device.java` : tailles, découpage et reconstruction.
-- [x] `data/device/Info.java` : ordre des champs et sérialisation des 48 octets.
-- [x] `data/device/Command.java` : ordre des champs et sérialisation des 8 octets.
-- [ ] `data/IOBody.java`.
-- [ ] `data/IOHeader.java`.
-- [x] Tailles et offsets des quatre zones principales.
-- [x] Formule du checksum dans `Device.calculateCheckSum()`.
-- [ ] Comparaison détaillée avec `DataResult.verifyCheckSum()`.
-- [ ] Rôle exact des marqueurs `0x53`.
-- [ ] Usage de `Device.headSize = 40`.
-- [ ] Rôle de `DataParserV2.getHeader()`.
+- [x] `Device.java` : constantes, tailles, découpage et reconstruction.
+- [x] `DataResult.java` : marqueur et checksum.
+- [x] `IOBody.java` : ancien `BODY_SIZE=129`, configuration de 6 octets, checksum textuel modulo 128.
+- [x] `IOHeader.java` : en-tête de 40 octets, champs 20/12/8.
+- [x] `DataParser.java` : ancien parseur, commandes sur 9 octets.
+- [x] `DataParserV2.java` : nouveau parseur, commandes sur 8 octets.
+- [ ] `IOSprinklerData.java` : valeur exacte de `SPRINKLE_DATA_SIZE`.
+- [ ] Résoudre la différence entre `totalSize=128`, `getData()` de 129 octets et `IOBody.BODY_SIZE=129`.
+- [ ] Confirmer le format exact des enregistrements de `DeviceListResponse`.
 
-### Priorité 2 — Programmation de l'arrosage
-
-- [ ] `NormalTimer.java`.
-- [ ] `SpecialTimer.java`.
-- [ ] `Schedule.java`.
-- [ ] `DeviceTimer.java`.
-- [ ] `IOSprinklerData.java`.
-- [ ] `DeviceCommand.java`.
-- [ ] Construction et sérialisation des données écrites.
-- [ ] Relation entre les programmes et les canaux/vannes.
-
-### Priorité 3 — Commandes
-
-- [ ] `SprinklerCommand.java`.
-- [ ] Méthodes de construction des commandes.
-- [ ] Chemins d'appel depuis les ViewModels et Presenters.
-- [ ] Signification des champs de la zone `Command`.
-- [ ] Valeurs et enums associés aux commandes.
-
-### Priorité 4 — Réseau local
+### Priorité 2 — Commandes locales et réseau
 
 - [ ] `GetApDeviceSettingTask.java`.
 - [ ] `SetApDeviceSettingTask.java`.
 - [ ] `HttpAPUrl.java`.
 - [ ] `HttpHelper.java`.
 - [ ] `HttpUtil.java`.
-- [ ] Endpoints locaux et mode point d'accès.
-- [ ] `SM_DEVICE_FEEDBACK`.
-- [ ] `SM_IDENTIFY_DEVICE`.
+- [ ] `SprinklerCommand.java`.
+- [ ] Références à `SM_DEVICE_FEEDBACK`.
+- [ ] Références à `SM_IDENTIFY_DEVICE`.
+- [ ] Identifier les IP et ports locaux.
+- [ ] Relier les méthodes d'interface aux tâches HTTP locales.
+- [ ] Déterminer si les commandes d'arrosage utilisent HTTP local, BLE ou un autre mécanisme.
 
-### Priorité 5 — Bluetooth
+### Priorité 3 — Programmation et états
+
+- [x] `NormalTimer.java` : structure et conversions principales.
+- [x] `SpecialTimer.java` : structure et conversions principales.
+- [x] Correspondance des jours de semaine.
+- [ ] `Schedule.java`.
+- [ ] `DeviceTimer.java`.
+- [ ] `DeviceCommand.java`.
+- [ ] `IOSprinklerData.java`.
+- [ ] Signification des six octets `ScheduleSetting`.
+- [ ] Valeurs et enums des huit octets `Command`.
+- [ ] Relations entre programmes et canaux/vannes.
+- [ ] Signification exacte des modèles de programme spécial.
+
+### Priorité 4 — Bluetooth
 
 - [ ] `BLEService.java`.
 - [ ] UUID des services et caractéristiques.
 - [ ] Format des messages BLE.
 - [ ] Commandes et réponses.
 - [ ] Relation entre BLE et configuration Wi-Fi.
+- [ ] Déterminer si BLE est une voie de commande ou seulement de provisionnement.
 
-### Priorité 6 — Provisionnement et configuration cloud
+### Priorité 5 — Authentification et dépendances cloud
 
-- [ ] Utilisation réelle de ESP Touch.
 - [ ] Références à `setServerDomain()` dans l'ensemble de l'APK.
 - [ ] Chaînes d'URL et adresses IP dans les ressources.
 - [ ] Authentification et gestion des jetons.
 - [ ] Dépendance effective au serveur distant.
+- [ ] Vérifier si une session ou un jeton obtenu initialement est indispensable au pilotage local.
+- [ ] Déterminer le comportement en cas d'indisponibilité du serveur fabricant.
 
-### Priorité 7 — Compatibilité matérielle
+### Priorité 6 — Compatibilité matérielle
 
-- [ ] Examiner `Product.java`.
-- [ ] Identifier les variantes de protocole par modèle.
+- [x] Valeurs logicielles de `Product.java`.
+- [ ] Identifier l'identifiant produit réel de l'A113W.
 - [ ] Comparer A101W et A113W.
+- [ ] Identifier les variantes de protocole par modèle.
 - [ ] Déterminer les fonctions communes et spécifiques.
+- [ ] Vérifier la compatibilité du second programmateur.
+
+### Priorité 7 — Faisabilité Home Assistant
+
+Cette étape ne commencera qu'après compréhension suffisante du protocole local.
+
+- [ ] Identifier le protocole local réellement utilisable.
+- [ ] Définir les opérations de lecture et d'écriture.
+- [ ] Définir une représentation fiable des états et programmes.
+- [ ] Étudier une intégration Home Assistant locale.
+- [ ] Prévoir une gestion de deux programmateurs.
+- [ ] Définir le comportement en cas de perte du réseau ou de Home Assistant.
+- [ ] Préserver l'exécution autonome des programmes enregistrés dans les programmateurs, si le matériel le permet.
+- [ ] Étudier l'accès distant via l'infrastructure existante et l'entrée Homer.
 
 ---
 
@@ -921,62 +1476,110 @@ La présence de bibliothèques et de classes dédiées ne suffit pas à détermi
 | 09/11/2026 | `UploadDeviceTask.java` | Enregistrement HTTP du matériel avec MAC, nom, fuseau horaire et jeton |
 | 09/11/2026 | `GetDeviceSettingTask.java` | Réponse binaire de 129 octets reconnue |
 | 09/11/2026 | `DataResult.java` | Marqueur à l'offset 127 et checksum à l'offset 128 |
-| 09/11/2026 | `DataParserV2.java` | Méthodes `convertDevice`, `getHeader`, `getInfo`, `getSchedule` et `getCommand` repérées |
 | 09/11/2026 | `Device.java` | Découpage et reconstruction des 128 octets de données établis |
-| 09/11/2026 | `Device.java` | Calcul du checksum sur les 128 octets reconstruit |
+| 09/11/2026 | `Device.java` | Calcul du checksum sur les 128 octets reconstruits |
 | 09/11/2026 | `Info.java` | Ordre exact des 19 champs et offsets des 48 octets établis |
 | 09/11/2026 | `Command.java` | Ordre exact des 8 champs et offsets globaux 120–127 établis |
+| 09/11/2026 | `DataParserV2.java` | Parsing V2 des blocs Info, Schedule et Command examiné |
+| 09/11/2026 | `NormalTimer.java` | Structure, activation, modèles et conversions de durée examinés |
+| 09/11/2026 | `SpecialTimer.java` | Structure, activation, semaines et encodage horaire examinés |
+| 09/11/2026 | Écrans de sélection des semaines | Correspondance des bits : lundi à dimanche |
+| 09/11/2026 | `Product.java`, `DeviceType.java` | Identifiants logiciels des variantes identifiés ; correspondance A113W non établie |
+| 09/11/2026 | `IOBody.java` | Ancien corps de 129 octets, configuration de 6 octets, checksum textuel modulo 128 |
+| 09/11/2026 | `IOHeader.java` | En-tête ancien de 40 octets : nom 20, MAC 12, config 8 |
+| 09/11/2026 | `DataParser.java` | Ancien parseur : Info 48, timers 66, config 6, commandes 9 |
+| 09/11/2026 | `DeviceListResponse.java` | Parsing V2 d'un en-tête de 40 octets suivi de `Device.totalSize` octets ; valeur de `SPRINKLE_DATA_SIZE` encore à vérifier |
 
 ---
 
-## 12. Dernier état de l'analyse
+## 12. Dernier état de l'analyse et point de reprise
 
-**Dernières classes examinées :**
+### 12.1 Dernières classes examinées
 
+Ancien modèle :
+
+- `data/IOBody.java`
+- `data/IOHeader.java`
+- `data/DataParser.java`
+
+Modèle V2 :
+
+- `data/DataParserV2.java`
 - `data/device/Device.java`
 - `data/device/Info.java`
 - `data/device/Command.java`
+- `data/device/DataResult.java`
+- `data/device/schedule/NormalTimer.java`
+- `data/device/schedule/SpecialTimer.java`
 
-**Dernière méthode examinée dans chacune :**
+Autres éléments :
 
-- `Device.setData()`
-- `Device.getData()`
-- `Device.calculateCheckSum()`
-- `Info.toBytes()`
-- `Command.toBytes()`
+- `enums/Product.java`
+- `DeviceType.java`
+- `task/DeviceListResponse.java`
+- `mqtt/MQTTHelper.java`
+- `utility/HttpUrlUtil.java`
 
-**Dernières découvertes :**
+### 12.2 Découvertes essentielles
 
-1. La structure des données utiles est de 128 octets.
-2. Le paquet complet, checksum compris, est de 129 octets.
-3. Les quatre zones sont identifiées avec leurs offsets absolus.
-4. Les 48 octets de `Info` sont documentés champ par champ.
-5. Les 66 octets de `Schedule` correspondent à six blocs de 11 octets.
-6. Les 6 octets de `ScheduleSetting` sont identifiés, mais leur structure interne reste inconnue.
-7. Les 8 octets de `Command` sont documentés champ par champ.
-8. Le checksum est calculé sur les 128 octets reconstruits, avec l'arithmétique signée des `byte` Java.
-9. `Device.headSize = 40` existe, mais son utilisation reste inconnue.
-10. `DataParserV2.getHeader()` a été repérée et doit être examinée.
+1. L'ancien et le nouveau modèle partagent les zones de 48 octets d'information, 66 octets de timers et 6 octets de configuration.
+2. L'ancien parseur utilise neuf octets de commandes.
+3. Le parseur V2 utilise huit octets de commandes.
+4. L'ancien `IOBody` expose `BODY_SIZE=129` et un checksum textuel modulo 128.
+5. Le modèle V2 reconstruit 128 octets de données et ajoute un checksum en 129e position.
+6. `DeviceListResponse` lit un en-tête de 40 octets puis `Device.totalSize`, qui vaut 128.
+7. La constante `IOSprinklerData.SPRINKLE_DATA_SIZE` n'a pas encore été vérifiée.
+8. Les six timers peuvent être normaux ou spéciaux.
+9. L'ordre des jours est confirmé : lundi à dimanche, bits 0 à 6.
+10. Les heures de `SpecialTimer` utilisent un encodage où chaque octet stocké vaut la valeur affichée augmentée de 1.
+11. Les identifiants de produits logiciels sont connus, mais l'identifiant réel de l'A113W n'est pas encore établi.
+12. MQTT est démontré pour la découverte et l'appairage, pas pour les commandes d'arrosage.
+13. L'API HTTP distante de gestion et de configuration est démontrée.
+14. Les chemins de communication locale restent à examiner.
 
-### Prochaine étape
+### 12.3 Prochaine étape immédiate
 
-Examiner directement le début de `DataParserV2.java`, notamment `convertDevice()` et `getHeader()`, puis poursuivre avec `getInfo()`.
+**Examiner `IOSprinklerData.java` et la constante `SPRINKLE_DATA_SIZE`.**
+
+Objectif : résoudre la différence entre :
+
+- 40 octets d'en-tête ;
+- `Device.totalSize = 128` ;
+- `Device.getData()` = 129 octets ;
+- `IOBody.BODY_SIZE = 129` ;
+- l'ancien corps qui contient neuf octets de commandes.
 
 Commande préparée :
 
 ```bash
 SRC="$HOME/Sprinkler-JADX/sources/com/ioshop/sprinkler"
 
-sed -n '1,145p' "$SRC/data/DataParserV2.java"
+echo "========== IOSPRINKLERDATA =========="
+
+cat "$SRC/data/IOSprinklerData.java"
 ```
 
-Attendre et analyser le résultat avant toute nouvelle commande.
+**Procédure :** exécuter uniquement cette commande, attendre le résultat, puis l'analyser avant de décider de la suivante.
+
+### 12.4 Étape suivante après résolution des tailles
+
+Reprendre l'investigation réseau locale :
+
+1. `HttpAPUrl.java`.
+2. `GetApDeviceSettingTask.java`.
+3. `SetApDeviceSettingTask.java`.
+4. `SprinklerCommand.java`.
+5. `HttpHelper.java` et `HttpUtil.java`.
+
+L'objectif est de suivre une commande depuis l'action dans l'application jusqu'à la méthode qui effectue réellement l'échange réseau.
+
+Ne pas envoyer de commande au programmateur pendant cette phase.
 
 ---
 
-## 13. Référence du projet
+## 13. Référence GitHub et continuité du projet
 
-Dépôt GitHub :
+Dépôt :
 
 https://github.com/testuflo-ft/docs-serveur-ia
 
@@ -984,6 +1587,33 @@ Fichier de référence :
 
 https://github.com/testuflo-ft/docs-serveur-ia/blob/main/SPRINKLER-REVERSE-ENGINEERING.md
 
+Branche :
+
+`main`
+
 Ce document est le référentiel technique cumulatif du projet Sprinkler. Il doit être consulté lors de toute reprise du travail.
 
-Toute mise à jour doit préserver les faits déjà établis, distinguer les hypothèses et actualiser le journal des découvertes.
+### Règle de sauvegarde
+
+Les résultats ne doivent pas rester uniquement dans l'historique d'une conversation.
+
+Lorsqu'une étape importante de l'analyse est terminée, mettre à jour ce fichier GitHub avant de poursuivre trop loin. Il faut éviter de repousser indéfiniment la documentation au profit de nouvelles investigations.
+
+À chaque mise à jour :
+
+- fournir le contenu intégral du fichier ;
+- préserver les découvertes antérieures ;
+- intégrer les nouveaux résultats ;
+- actualiser le journal ;
+- actualiser le point de reprise ;
+- distinguer clairement les faits, hypothèses et questions ouvertes.
+
+L'utilisateur colle lui-même le contenu dans l'éditeur GitHub et confirme lorsque la mise à jour est terminée. Ne pas prétendre avoir publié une modification si l'utilisateur ne l'a pas effectuée.
+
+### Objectif final du projet
+
+Déterminer si l'A113W et un second programmateur peuvent être pilotés localement, sans dépendance obligatoire à l'application et au serveur d'authentification du fabricant.
+
+Si la faisabilité est démontrée, étudier une intégration Home Assistant et un accès depuis Homer, en conservant l'architecture réseau existante.
+
+**Aucune autonomie complète, compatibilité Home Assistant ou indépendance vis-à-vis du cloud ne doit être annoncée avant validation technique.**
