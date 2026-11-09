@@ -17,17 +17,23 @@ Le matériel étudié est le programmateur **A113W**. L'objectif à terme est d'
 Architecture envisagée, sous réserve de faisabilité technique :
 
 ```text
-Accès utilisateur
+Téléphone distant
+       |
+       v
+   Tailscale
        |
        v
      Homer
        |
        v
 Home Assistant
+   (Mac mini)
        |
-       +------ communication locale ------ A113W
+       | Wi-Fi domestique
        |
-       +------ communication locale ------ second programmateur
+       +-------------------- A113W
+       |
+       +-------------------- second programmateur
 ```
 
 Homer reste le portail d'accès. Home Assistant assure l'interface de commande et les automatisations.
@@ -54,7 +60,8 @@ Il ne faudra jamais confondre une simple communication locale possible avec une 
 - Communication Bluetooth Low Energy (BLE).
 - Provisionnement Wi-Fi.
 - API HTTP distante.
-- API HTTP locale et mode point d'accès.
+- API HTTP locale en mode point d'accès.
+- API HTTP locale éventuelle en mode station.
 - MQTT.
 - Format binaire propriétaire de configuration.
 - Commandes d'arrosage.
@@ -69,7 +76,7 @@ L'analyse doit rester non destructive.
 - Ne pas modifier l'APK original.
 - Ne pas modifier l'application installée sur le téléphone.
 - Ne pas envoyer de commandes au programmateur pendant cette phase d'analyse.
-- Ne pas interroger le contrôleur ou le serveur distant pendant l'analyse statique.
+- Ne pas effectuer de test réseau actif sur le programmateur pendant l'analyse statique.
 - Ne pas modifier le réseau ou la configuration du programmateur.
 - Privilégier les commandes de lecture seule sur les fichiers décompilés.
 - Ne procéder à aucun changement sur un système en production sans validation explicite.
@@ -99,7 +106,23 @@ Ne pas transformer une hypothèse en fait au fil des conversations.
 - Accès principalement par SSH.
 - Système macOS.
 
-### 2.2 APK et décompilation
+### 2.2 Configuration réseau réelle du Mac mini
+
+Le Mac mini n'est pas relié au réseau domestique par Ethernet.
+
+Sa configuration actuelle est :
+
+- Wi-Fi : connexion au réseau domestique et à Internet.
+- Ethernet : liaison directe avec le NAS Synology.
+- NAS Synology : sa propre interface Ethernet est reliée au réseau local et à Internet.
+
+Le NAS ne sert pas de hub Ethernet ni de passerelle pour le Mac mini.
+
+**Conséquence pour l'architecture envisagée :** si les programmateurs sont connectés au Wi-Fi domestique en mode station et exposent une API locale sur ce réseau, le Mac mini pourrait communiquer avec eux par son interface Wi-Fi. Le NAS n'aurait pas à intervenir dans ces échanges.
+
+Cette possibilité reste conditionnée à la disponibilité de l'API locale en mode station.
+
+### 2.3 APK et décompilation
 
 Répertoire de travail :
 
@@ -123,7 +146,7 @@ Inventaire déjà effectué :
 
 L'APK original est conservé séparément. Les analyses portent sur les fichiers décompilés.
 
-### 2.3 Répertoire source utilisé dans les commandes
+### 2.4 Répertoire source utilisé dans les commandes
 
 ```bash
 SRC="$HOME/Sprinkler-JADX/sources/com/ioshop/sprinkler"
@@ -217,7 +240,7 @@ Une permission nommée `android.permission.BLUE` a également été observée. S
 
 ---
 
-## 5. MQTT : mécanisme de découverte et d'appairage
+## 5. MQTT et découverte du programmateur
 
 ### 5.1 Client MQTT
 
@@ -306,7 +329,7 @@ Le message reçu fournit au minimum une adresse IP et un BSSID. Le code réutili
 
 ---
 
-## 6. API HTTP distante
+## 6. API HTTP distante et enregistrement des appareils
 
 ### 6.1 Configuration des URL
 
@@ -332,7 +355,7 @@ Les méthodes `gen...Url()` utilisent `mServerDomain` si celui-ci n'est pas vide
 
 À ce stade, aucune invocation de `setServerDomain()` n'a été trouvée dans la recherche effectuée sur le package propriétaire. Cette recherche devra être élargie à l'ensemble de l'APK et aux ressources.
 
-### 6.2 Endpoints identifiés
+### 6.2 Endpoints distants identifiés
 
 Les chemins suivants sont définis dans `HttpUrlUtil.java` :
 
@@ -350,14 +373,14 @@ Les chemins suivants sont définis dans `HttpUrlUtil.java` :
 | `31/v1/app/%1$s/config` | Configuration d'un appareil |
 | `user/uploadDevice` | Enregistrement d'un appareil |
 
-Le code définit également :
+Le code définit également deux URL locales :
 
 ```java
 SM_DEVICE_FEEDBACK = "http://%s/feedback?NTP=%s&TIMEZONE=%s";
 SM_IDENTIFY_DEVICE = "http://%s/TYPE_BRAND";
 ```
 
-Ces deux URL suggèrent l'existence d'échanges HTTP locaux avec un appareil, mais leur utilisation effective reste à analyser.
+Ces URL sont utilisées pendant l'identification du programmateur lors de l'appairage. Leur rôle est détaillé à la section 9.
 
 Un client ID est codé en dur :
 
@@ -365,67 +388,130 @@ Un client ID est codé en dur :
 
 Sa fonction exacte devra être documentée à partir de ses références.
 
-### 6.3 Enregistrement du programmateur
+### 6.3 Enregistrement du programmateur : UploadDeviceTask
 
 Fichier :
 
 `task/UploadDeviceTask.java`
 
-Appel observé :
+Le constructeur reçoit :
+
+```java
+UploadDeviceTask(
+    Context context,
+    String mac,
+    String name,
+    String timezone,
+    IAsyncTaskResultCallback callback
+)
+```
+
+La méthode `onDo()` exécute :
 
 ```java
 HttpUtil.getInstance().post(
     HttpUrlUtil.genUploadDeviceUrl(),
-    HttpUrlUtil.genUploadDeviceContent(mac, name, timezone),
+    HttpUrlUtil.genUploadDeviceContent(
+        this.mMac,
+        this.mName,
+        this.mTimeZone
+    ),
     PreferenceHelper.INSTANCE.getLoginToken(),
     true
 );
 ```
 
-Le JSON construit par `genUploadDeviceContent()` contient :
-
-```json
-{
-  "mac": "...",
-  "name": "...",
-  "timezone": "..."
-}
-```
-
-Constats :
+**FAITS DÉMONTRÉS :**
 
 - POST vers `user/uploadDevice`.
 - Transmission de la MAC.
 - Transmission du nom.
 - Transmission du fuseau horaire.
-- Transmission du jeton utilisateur.
+- Transmission du jeton utilisateur via `PreferenceHelper.INSTANCE.getLoginToken()`.
+- Le paramètre `true` indique l'utilisation du corps JSON dans cette surcharge de `HttpUtil.post()`.
 
-Les valeurs `ip` et `bssid` reçues par MQTT ne sont pas transmises explicitement dans cet appel.
+La réponse est transformée en `JSONObject`, puis traitée par `UploadDeviceResponse`.
 
-### 6.4 Lecture et écriture de configuration
+La méthode `parseHttpResponse()` :
 
-`GetDeviceSettingTask.java` :
+- récupère `getStatusCode()` ;
+- appelle également `getProductID()` ;
+- renvoie le statut.
 
-- GET sur `31/v1/app/{MAC}/config`.
-- Transmission du jeton utilisateur.
-- Jusqu'à trois tentatives.
-- Traitement particulier d'une réponse de 129 octets.
+En cas de succès, `onSuccess()` appelle le callback du Presenter.
 
-`SetDeviceSettingTask.java` :
+En cas d'échec, `onFail(int status)` transmet le statut au callback.
 
-- POST sur le même endpoint.
-- Transmission de `mSetting`.
-- Transmission du jeton utilisateur.
-- Journalisation de la valeur envoyée avec le tag `setDeviceSettingTask`.
+**Point important :** l'adresse IP locale obtenue pendant ESPTouch n'est pas passée au constructeur de `UploadDeviceTask` et n'est pas transmise explicitement dans cet appel. Le `productID` est lu dans la réponse, mais son rôle ultérieur doit encore être étudié.
 
-Autres tâches identifiées :
+### 6.4 Lecture de configuration distante
 
-- `GetDeviceListTask.java` : lecture de la liste des appareils.
-- `ChangeDeviceNameTask.java` : modification du nom d'un appareil.
+Fichier :
 
-**INTERPRÉTATION :** l'application utilise une API HTTP(S) distante pour gérer la liste des appareils et lire ou modifier leur configuration.
+`task/GetDeviceSettingTask.java`
 
-Cela ne prouve pas que les commandes doivent nécessairement passer par ce serveur : l'API locale reste à examiner.
+Le code utilise :
+
+```java
+HttpUrlUtil.genAccessSettingUrl()
+```
+
+Cette méthode construit l'URL :
+
+`31/v1/app/%1$s/config`
+
+Le MAC est injecté dans le chemin.
+
+La requête GET utilise le jeton :
+
+`PreferenceHelper.INSTANCE.getLoginToken()`
+
+La réponse est traitée de la façon suivante :
+
+- si `response.getBytes().length == 129`, elle est interprétée comme une réponse binaire `DeviceSettingResponse` ;
+- sinon, elle est traitée comme un JSON `SimpleTaskResponse`.
+
+Le chemin de lecture distant est donc authentifié par Bearer token.
+
+### 6.5 Écriture de configuration distante
+
+Fichier :
+
+`task/SetDeviceSettingTask.java`
+
+Le Presenter construit les données avec :
+
+```java
+new String(device.getData(), StandardCharsets.UTF_8)
+```
+
+`Device.getData()` retourne 129 octets : les 128 octets de données V2 et le checksum.
+
+Le chemin distant transmet ces données à `SetDeviceSettingTask`, qui utilise l'URL de configuration distante et le jeton de connexion.
+
+La méthode exacte et le traitement de la réponse devront être conservés dans le suivi détaillé de cette classe.
+
+### 6.6 Dépendance au cloud pour les fonctions examinées
+
+`DeviceFunctionPresenter.getDeviceSetting()` :
+
+1. lance `GetDeviceSettingTask` ;
+2. récupère `tempDevice` à partir de la réponse ;
+3. modifie la commande correspondant à la fonction demandée ;
+4. appelle `setDeviceSetting(tempDevice)`.
+
+`setDeviceSetting()` reconstruit les 129 octets et lance `SetDeviceSettingTask`.
+
+`NewDeviceFunctionViewModel` distingue les chemins :
+
+- si `device.isAp()` est vrai, il appelle `getDeviceDataFromAp()` ;
+- si `device.isAp()` est faux, il utilise le chemin distant, notamment `presenter.setStopRun()` pour la fonction étudiée.
+
+Le traitement des erreurs comporte un retour à la connexion en cas de statut 401.
+
+**FAIT DÉMONTRÉ :** pour les fonctions examinées, l'application utilise un chemin local en mode AP et un chemin cloud lorsque `device.isAp()` est faux.
+
+**À NE PAS GÉNÉRALISER :** cela ne prouve pas que toutes les fonctions de l'application utilisent exclusivement le cloud en mode station. Il faut encore examiner les autres chemins et les possibilités d'accès local.
 
 ---
 
@@ -752,27 +838,48 @@ C = \left(\sum_{i=0}^{127} b_i\right)\bmod 256
 
 Le checksum est ajouté après les 128 octets. Il n'est pas inclus dans sa propre somme.
 
-### 7.10 DeviceListResponse : en-tête et taille des enregistrements
+### 7.10 IOSprinklerData et DeviceListResponse : format global des enregistrements
 
-Fichier :
+Fichiers :
 
-`task/DeviceListResponse.java`
+- `data/IOSprinklerData.java`
+- `task/DeviceListResponse.java`
 
-Le constructeur procède notamment ainsi :
+Dans `IOSprinklerData.java` :
 
 ```java
-int headSize = Device.INSTANCE.getHeadSize();
-byte[] bArr = new byte[headSize];
-System.arraycopy(bytes, i, bArr, 0, headSize);
+public static final int SPRINKLE_DATA_SIZE = 169;
+```
 
-IOHeader header = DataParserV2.getHeader(bArr);
+La classe `IOSprinklerData` est un conteneur Parcelable composé de :
 
-int headSize2 = Device.INSTANCE.getHeadSize() + i;
-int totalSize = Device.INSTANCE.getTotalSize();
-byte[] bArr2 = new byte[totalSize];
-System.arraycopy(bytes, headSize2, bArr2, 0, totalSize);
+- un `IOHeader` ;
+- un `IOBody`.
 
-Device deviceConvertDevice = DataParserV2.convertDevice(bArr2);
+Elle ne définit pas elle-même le découpage du flux réseau.
+
+Dans `DeviceListResponse.java`, le constructeur exécute :
+
+```java
+byte[] bytes = result.getBytes();
+
+for (int i = 0; i < bytes.length; i += IOSprinklerData.SPRINKLE_DATA_SIZE) {
+    int headSize = Device.INSTANCE.getHeadSize();
+
+    byte[] bArr = new byte[headSize];
+    System.arraycopy(bytes, i, bArr, 0, headSize);
+
+    int headSize2 = Device.INSTANCE.getHeadSize() + i;
+
+    IOHeader header = DataParserV2.getHeader(bArr);
+
+    int totalSize = Device.INSTANCE.getTotalSize();
+
+    byte[] bArr2 = new byte[totalSize];
+    System.arraycopy(bytes, headSize2, bArr2, 0, totalSize);
+
+    Device deviceConvertDevice = DataParserV2.convertDevice(bArr2);
+}
 ```
 
 Constantes observées dans `Device.java` :
@@ -780,34 +887,37 @@ Constantes observées dans `Device.java` :
 - `headSize = 40`
 - `totalSize = 128`
 
-Le code :
+Le constructeur parcourt donc la réponse par pas de 169 octets et extrait :
 
-- Copie 40 octets d'en-tête.
-- Appelle `DataParserV2.getHeader()`.
-- Copie ensuite 128 octets.
-- Passe ces 128 octets à `DataParserV2.convertDevice()`.
+| Position dans chaque enregistrement | Taille | Traitement |
+|---|---:|---|
+| 0–39 | 40 octets | Copiés dans `IOHeader` |
+| 40–167 | 128 octets | Copiés dans `Device` V2 |
+| 168 | 1 octet | Non copié et non exploité par ce constructeur |
+| **Total** | **169 octets** | Pas de parcours |
 
-`DataParserV2.convertDevice()` construit le Device à partir des 128 octets utiles. Il ne traite pas le checksum.
+Après conversion, le code affecte au Device :
+
+- le nom extrait du champ `deviceName` ;
+- la MAC extraite du champ `deviceMac` ;
+- la configuration issue du champ `config`.
+
+Les chaînes du nom et de la MAC sont découpées sur le caractère `-` et le premier élément est conservé.
 
 **FAITS DÉMONTRÉS :**
 
-- `headSize` vaut 40.
-- `totalSize` vaut 128 dans `Device`.
-- `DeviceListResponse` copie 40 octets d'en-tête puis 128 octets de données utiles.
-- `Device.getData()` reconstruit 129 octets avec checksum.
-- `DataResult` traite séparément le checksum à l'offset 128.
+- `SPRINKLE_DATA_SIZE` vaut 169.
+- `DeviceListResponse` parcourt le flux par pas de 169 octets.
+- Chaque enregistrement commence par un en-tête de 40 octets.
+- Les 128 octets suivants sont transmis à `DataParserV2.convertDevice()`.
+- Le dernier octet de l'enregistrement, à l'offset local 168, n'est pas copié ni vérifié par ce constructeur.
+- `Device.getData()` reconstruit séparément 129 octets, dont un checksum à l'offset 128.
 
-Le découpage 128/129 est donc déjà expliqué par la distinction entre les données utiles et leur checksum.
+**À NE PAS AFFIRMER :**
 
-**POINT RESTANT À VÉRIFIER :**
+Le dernier octet de l'enregistrement de 169 octets n'est pas démontré comme étant le checksum V2. Le constructeur de `DeviceListResponse` ne le vérifie pas et ne permet pas d'en déterminer la fonction.
 
-- La valeur de `IOSprinklerData.SPRINKLE_DATA_SIZE`.
-- La longueur et le pas exacts des enregistrements parcourus par `DeviceListResponse`.
-- La façon dont le checksum est présent ou non dans ce flux particulier.
-
-Cette question porte sur le format global des enregistrements et leur pas de parcours, pas sur la distinction entre 128 et 129 octets.
-
-Ne pas réintroduire la distinction 128/129 comme une incohérence non résolue.
+Il faut également noter que `result.getBytes()` utilise le charset par défaut de Java, et non explicitement `StandardCharsets.UTF_8`. Le traitement de l'encodage du flux de liste devra être vérifié dans la chaîne HTTP complète.
 
 ### 7.11 Conclusion sur les formats
 
@@ -830,7 +940,13 @@ Dans l'ancien modèle :
 - `IOBody.BODY_SIZE` vaut 129.
 - `IOBody.calCheckSum()` calcule une somme des caractères modulo 128.
 
-Ces deux mécanismes de checksum ne doivent pas être confondus.
+Pour le flux de liste des appareils :
+
+- Un enregistrement occupe 169 octets.
+- Le code exploite 40 octets d'en-tête et 128 octets de données V2.
+- Le 169e octet n'est pas traité par `DeviceListResponse`.
+
+Ces différents mécanismes ne doivent pas être confondus.
 
 ---
 
@@ -1335,61 +1451,395 @@ Attention : les noms des champs ne suffisent pas à établir leur sémantique op
 
 ---
 
-## 9. Architecture des communications et dépendance au cloud
+## 9. Communications locales, appairage et dépendance au cloud
 
-### 9.1 Couches actuellement démontrées
+### 9.1 Découverte de l'adresse IP par ESPTouch
 
-| Couche | Fonction observée | État de preuve |
-|---|---|---|
-| MQTT distant | Découverte et appairage Wi-Fi | Démontré |
-| HTTP(S) distant | Enregistrement, liste des appareils, lecture/écriture de configuration | Démontré |
-| Structure binaire V2 | Représentation de la configuration | Démontré |
-| HTTP local | Endpoints suggérés par les constantes | Non vérifié |
-| BLE | Bibliothèques et classes présentes | Non vérifié |
+Fichier :
 
-### 9.2 Ce que l'on sait de la dépendance au fabricant
+`Presenter/DeviceAddPresenter.java`
 
-Le code examiné montre que l'application utilise le serveur distant pour :
+La méthode `searchDevice(ssid, bssid, password)` lance `SmartConfigTask`, qui utilise la bibliothèque ESPTouch.
 
-- L'authentification utilisateur.
-- L'enregistrement des appareils.
-- La récupération de la liste des appareils.
-- La lecture de configuration.
-- L'écriture de configuration.
-
-Cela établit une dépendance de l'application à des services distants pour les opérations examinées.
-
-Cela ne démontre pas que le programmateur lui-même exige le serveur pour exécuter ses programmes ou accepter des commandes locales.
-
-### 9.3 Question centrale encore ouverte
-
-Il faut découvrir si l'application sait communiquer directement avec le programmateur sur le LAN ou en mode point d'accès, sans passer par les endpoints cloud.
-
-Les constantes suivantes sont des pistes :
+Le listener appelle :
 
 ```java
-SM_DEVICE_FEEDBACK = "http://%s/feedback?NTP=%s&TIMEZONE=%s";
+onEsptoucResultAddedPerform(result);
+```
+
+Cette méthode exécute :
+
+```java
+identifyDevice(
+    result.getBssid(),
+    result.getInetAddress().getHostAddress()
+);
+```
+
+La méthode `identifyDevice(String mac, String ip)` reçoit donc :
+
+- le BSSID, utilisé comme identifiant MAC dans ce chemin ;
+- l'adresse IP découverte par ESPTouch.
+
+### 9.2 Identification HTTP locale
+
+Dans `identifyDevice()`, l'application effectue jusqu'à cinq tentatives.
+
+Première requête :
+
+```java
+HttpUtil.getInstance().get(
+    String.format(HttpUrlUtil.SM_IDENTIFY_DEVICE, ip)
+).getString(HttpUrlUtil.SM_DEVICE_BRAND)
+```
+
+Les constantes de `HttpUrlUtil.java` sont :
+
+```java
+DS_DEVICE_BRAND = "LinkU";
+SM_DEVICE_BRAND = "BRAND";
 SM_IDENTIFY_DEVICE = "http://%s/TYPE_BRAND";
 ```
 
-Les classes suivantes doivent être examinées :
+L'application vérifie que la valeur du champ JSON `BRAND` est égale à `LinkU`.
 
-- `HttpAPUrl.java`
-- `GetApDeviceSettingTask.java`
-- `SetApDeviceSettingTask.java`
-- `HttpHelper.java`
-- `HttpUtil.java`
-- `SprinklerCommand.java`
+Deuxième requête :
 
-Il faudra identifier les adresses IP utilisées, les méthodes HTTP, les corps de requête et les réponses attendues.
+```java
+HttpUtil.getInstance().get(
+    String.format(
+        HttpUrlUtil.SM_DEVICE_FEEDBACK,
+        ip,
+        "",
+        200
+    )
+).getInt(HttpUrlUtil.SM_STATUS_CODE)
+```
 
-**Aucune autonomie locale complète n'est encore démontrée.**
+Les constantes sont :
+
+```java
+SM_DEVICE_FEEDBACK =
+    "http://%s/feedback?NTP=%s&TIMEZONE=%s";
+
+SM_STATUS_CODE = "status_code";
+```
+
+L'application vérifie que `status_code` vaut 200.
+
+**Correction importante :** le champ effectivement lu par le code est `status_code`, et non `status`.
+
+### 9.3 Enregistrement distant après identification locale
+
+Si les deux requêtes locales réussissent, `identifyDevice()` appelle :
+
+```java
+uploadDevices(
+    mac,
+    this.mActivity.getString(R.string.pre_default_name)
+        + mac.substring(mac.length() - 4)
+);
+```
+
+`uploadDevices()` construit un `UploadDeviceTask` avec :
+
+- le contexte ;
+- la MAC ;
+- le nom ;
+- le fuseau horaire ;
+- le callback.
+
+L'adresse IP n'est pas passée à `UploadDeviceTask`.
+
+`UploadDeviceTask` transmet ensuite au cloud la MAC, le nom, le fuseau horaire et le jeton de connexion.
+
+**FAITS DÉMONTRÉS :**
+
+- ESPTouch fournit une adresse IP et un BSSID.
+- L'application utilise l'adresse IP pour interroger directement le programmateur.
+- `TYPE_BRAND` permet de vérifier la marque `LinkU`.
+- `feedback` reçoit les paramètres NTP et de fuseau horaire.
+- L'application vérifie `status_code == 200`.
+- Après cette identification, l'application enregistre l'appareil auprès du serveur fabricant.
+- L'adresse IP n'est pas transmise explicitement au constructeur de `UploadDeviceTask`.
+
+**INTERPRÉTATION :** l'adresse IP est utilisée dans cette procédure pour identifier et vérifier localement le matériel. Le code examiné ne démontre pas qu'elle soit conservée pour le pilotage ultérieur.
+
+### 9.4 Endpoints locaux du mode AP
+
+Fichier :
+
+`utility/HttpAPUrl.java`
+
+Base :
+
+`http://192.168.4.1`
+
+Endpoints définis :
+
+- `/typeAndMAC`
+- `/connectType`
+- `/SSIDPwd`
+- `/stationInfo`
+- `/property`
+- `/TIME`
+- `/Read128`
+- `/GetHistory`
+
+Les classes de présentation et tâches d'appairage utilisent ces chemins pour la configuration et l'identification du programmateur en mode point d'accès.
+
+### 9.5 Lecture locale : /TIME
+
+Fichier :
+
+`task/GetApDeviceSettingTask.java`
+
+Le chemin local de lecture utilise une requête POST vers `/TIME`.
+
+Le corps JSON est construit sous la forme :
+
+```json
+{"TIME":"..."}
+```
+
+La chaîne temporelle inclut l'heure courante et le numéro du jour de semaine.
+
+La réponse attendue est de 129 octets et passe par le traitement de `DataResult` :
+
+- marqueur `S` à l'offset 127 ;
+- checksum à l'offset 128.
+
+Le chemin moderne correspondant est également présent dans `WifiDeviceRepo`.
+
+### 9.6 Écriture locale : /Read128
+
+Fichier :
+
+`task/SetApDeviceSettingTask.java`
+
+Le chemin local d'écriture utilise POST `/Read128`.
+
+Le contenu est transmis avec le type MIME `application/octet-stream`.
+
+Dans le chemin étudié, les données sont issues de `Device.getData()`, soit 129 octets : 128 octets utiles et un checksum.
+
+La réponse est traitée comme un JSON de statut.
+
+Le chemin moderne correspondant est également présent dans `WifiDeviceRepo`.
+
+### 9.7 HttpHelper : appels locaux sans Bearer token
+
+Fichier :
+
+`network/HttpHelper.java`
+
+La classe utilise OkHttp avec des délais de connexion, écriture et lecture de 30 secondes.
+
+Méthodes observées :
+
+- `getAp(url)` : GET sans header Authorization ajouté par cette méthode.
+- `postAp(url, data, isJson)` : POST sans header Authorization ajouté par cette méthode.
+
+La méthode `postAp()` accepte le contenu et le type de données, puis effectue la requête HTTP.
+
+Seul le statut HTTP 200 est traité comme succès dans le chemin examiné. Les autres statuts sont convertis en échec.
+
+La méthode `postAp()` journalise au niveau Debug :
+
+- l'URL ;
+- les données ;
+- le type de contenu (`isJson`).
+
+Le chemin moderne de `WifiDeviceRepo` utilise `network.HttpHelper`, notamment pour :
+
+- `getApDeviceSetting()` : POST `/TIME` avec JSON ;
+- `setApDeviceSetting()` : POST `/Read128` ;
+- `getHistory()` : GET `/GetHistory`.
+
+**FAIT DÉMONTRÉ :** ces méthodes clientes n'ajoutent pas de Bearer token HTTP.
+
+Cela ne prouve pas que le firmware n'applique aucune authentification ou protection interne.
+
+### 9.8 Ancien chemin HttpUtil
+
+Fichier :
+
+`utility/HttpUtil.java`
+
+Les surcharges observées ne sont pas toutes équivalentes :
+
+- `post(url, content)` : POST JSON sans Authorization.
+- `post(url, content, tokenID, isJSON)` : ajoute `Authorization: Bearer <tokenID>`.
+- `get`, `put` et `delete` : ajoutent un Bearer token dans les chemins examinés.
+
+Les anciennes tâches AP n'utilisent pas toutes la même surcharge :
+
+- `GetApDeviceSettingTask` utilise une surcharge à deux arguments sans authentification Bearer explicite.
+- `SetApDeviceSettingTask` utilise une surcharge à quatre arguments avec un Bearer token vide.
+
+Les appels modernes de `WifiDeviceRepo` passent par `network.HttpHelper`, et non par ces anciennes méthodes.
+
+### 9.9 DirectPairManager et connexion au point d'accès
+
+Fichier :
+
+`utility/DirectPairManager.java`
+
+La méthode `setUp(context, ssid, password, isHidden)` prépare la connexion Wi-Fi au point d'accès du programmateur.
+
+Sur Android 10 et versions ultérieures, le code utilise `WifiNetworkSpecifier` avec SSID et mot de passe WPA2, puis :
+
+```java
+bindProcessToNetwork(network)
+```
+
+Le processus Android est ainsi associé au réseau du programmateur.
+
+L'ancien chemin configure un `WifiConfiguration`.
+
+Le gestionnaire traite le scan Wi-Fi, un délai d'attente de 10 secondes et les callbacks de connexion.
+
+**Limite :** `DirectPairManager` ne récupère pas à lui seul l'adresse IP du programmateur.
+
+### 9.10 Deux familles de communications locales identifiées
+
+L'analyse a maintenant identifié deux familles d'URL HTTP locales :
+
+**A. Endpoints utilisés pendant l'identification après ESPTouch :**
+
+- `http://<IP>/TYPE_BRAND`
+- `http://<IP>/feedback?NTP=...&TIMEZONE=...`
+
+L'adresse IP est fournie par le résultat ESPTouch.
+
+**B. Endpoints utilisés pour le pilotage local en mode AP :**
+
+- `http://192.168.4.1/TIME`
+- `http://192.168.4.1/Read128`
+- `http://192.168.4.1/GetHistory`
+- autres endpoints de configuration AP.
+
+Ces deux familles ne doivent pas être confondues.
+
+### 9.11 Question centrale : accès local en mode station
+
+Le code prouve que l'application sait communiquer par HTTP avec l'adresse IP obtenue pendant ESPTouch.
+
+Il prouve également l'existence d'une API locale utilisée en mode AP.
+
+En revanche, il ne démontre pas encore que les endpoints de lecture et d'écriture (`/TIME`, `/Read128`, `/GetHistory`) sont accessibles lorsque le programmateur est connecté au Wi-Fi domestique en mode station.
+
+Le comportement non-AP observé dans certaines fonctions passe par l'API cloud. Cela ne suffit pas à conclure que le firmware n'expose aucune API locale en mode station.
+
+**À VÉRIFIER :**
+
+1. Si le programmateur écoute sur son adresse IP du LAN en mode station.
+2. Si `/TYPE_BRAND` et `/feedback` restent accessibles après le provisionnement.
+3. Si `/TIME`, `/Read128` et `/GetHistory` répondent sur l'adresse IP du programmateur en mode station.
+4. Si l'adresse IP est communiquée par MQTT, DHCP ou un autre mécanisme.
+5. Si l'adresse IP peut être retrouvée durablement sans application mobile.
+6. Si le programmateur possède une authentification ou un contrôle d'accès côté firmware.
+7. Si l'API locale est limitée à l'interface AP.
+
+Aucun test actif n'a été effectué sur le matériel pour répondre à ces questions.
+
+### 9.12 Architecture réseau cible
+
+La configuration réelle du Mac mini est compatible avec une architecture locale si l'API station existe :
+
+```text
+Téléphone distant
+       |
+       v
+   Tailscale
+       |
+       v
+     Homer
+       |
+       v
+Home Assistant
+   (Mac mini)
+       |
+       | Wi-Fi domestique
+       |
+       v
+  Programmateurs
+```
+
+Le Mac mini possède :
+
+- une connexion Wi-Fi au réseau domestique ;
+- une liaison Ethernet directe au NAS.
+
+Le NAS possède sa propre connexion Ethernet au réseau local. Il ne joue pas le rôle de hub entre le Mac mini et le réseau Wi-Fi.
+
+Si les programmateurs sont en mode station et exposent leur API locale sur le LAN, le Mac mini pourrait les piloter par son Wi-Fi sans passer par le NAS.
+
+Si l'API est uniquement disponible en mode AP, une autre solution devra être étudiée. Il ne faut pas supposer que le Mac mini puisse simultanément rester sur le Wi-Fi domestique et joindre le point d'accès isolé d'un programmateur avec une seule interface Wi-Fi.
+
+### 9.13 Sécurité locale
+
+Les appels locaux examinés utilisent HTTP en clair.
+
+Le client Sprinkler n'ajoute pas d'authentification HTTP dans le chemin moderne AP de `HttpHelper`.
+
+`postAp()` journalise les URL et les données au niveau Debug.
+
+Le chemin `/Read128` transmet 129 octets de données d'appareil.
+
+Le chemin `/TIME` transmet un JSON de synchronisation temporelle et attend une réponse binaire de 129 octets.
+
+**FAITS DÉMONTRÉS :**
+
+- Le client effectue des échanges HTTP locaux sans Bearer token dans les méthodes modernes AP.
+- Les données de configuration sont transmises en clair dans ce chemin.
+- L'application autorise le trafic en clair dans son manifeste.
+
+**INCONNUES FIRMWARE :**
+
+- Authentification interne.
+- Segmentation réseau.
+- Exposition des endpoints en mode station.
+- Contrôles d'origine ou de source.
+- Protection contre les requêtes répétées.
+- Chiffrement et protection réels du point d'accès.
+- Contrôle d'accès aux endpoints sur le réseau domestique.
+
+Ne pas qualifier de vulnérabilité confirmée ou exploitable sans preuve.
+
+**Recommandation d'architecture future :** si le firmware n'applique pas d'authentification, privilégier une isolation réseau et des ACL afin que Home Assistant soit le seul client autorisé. Ne pas exposer directement les endpoints du programmateur au LAN général ou à Internet.
 
 ---
 
 ## 10. Points restant à examiner et ordre de reprise
 
-### Priorité 1 — Format global des enregistrements
+### Priorité 1 — API locale et mode station
+
+C'est désormais le point prioritaire, car il conditionne l'architecture Home Assistant envisagée.
+
+- [x] Identifier les endpoints `/TYPE_BRAND` et `/feedback`.
+- [x] Identifier la découverte de l'adresse IP par ESPTouch.
+- [x] Confirmer que l'adresse IP n'est pas passée explicitement à `UploadDeviceTask`.
+- [x] Identifier les endpoints AP `/TIME`, `/Read128` et `/GetHistory`.
+- [x] Identifier les méthodes modernes `HttpHelper` utilisées pour les appels AP.
+- [ ] Déterminer si les endpoints locaux sont accessibles en mode station.
+- [ ] Identifier le mécanisme permettant de retrouver l'IP du programmateur sur le LAN.
+- [ ] Déterminer si l'API locale en mode station est identique à l'API AP.
+- [ ] Vérifier les éventuelles restrictions d'accès côté firmware.
+
+### Priorité 2 — Commandes locales et réseau
+
+- [x] `HttpAPUrl.java`.
+- [x] `GetApDeviceSettingTask.java`.
+- [x] `SetApDeviceSettingTask.java`.
+- [x] `HttpHelper.java` : méthodes AP et absence de Bearer token.
+- [x] `HttpUtil.java` : différences entre surcharges.
+- [ ] `SprinklerCommand.java`.
+- [ ] Relier toutes les méthodes d'interface aux tâches HTTP locales.
+- [ ] Déterminer si les commandes d'arrosage utilisent HTTP local, BLE ou un autre mécanisme.
+- [ ] Examiner les chemins locaux et cloud de chaque fonction.
+
+### Priorité 3 — Format global et données
 
 - [x] `Device.java` : constantes, tailles, découpage et reconstruction.
 - [x] `DataResult.java` : marqueur et checksum.
@@ -1398,25 +1848,13 @@ Il faudra identifier les adresses IP utilisées, les méthodes HTTP, les corps d
 - [x] `DataParser.java` : ancien parseur, commandes sur 9 octets.
 - [x] `DataParserV2.java` : nouveau parseur, commandes sur 8 octets.
 - [x] Distinction entre 128 octets de données V2 et 129 octets avec checksum.
-- [ ] `IOSprinklerData.java` : valeur exacte de `SPRINKLE_DATA_SIZE`.
-- [ ] Confirmer le pas exact des enregistrements parcourus par `DeviceListResponse`.
-- [ ] Vérifier comment le checksum est traité dans le flux de liste des appareils.
+- [x] `IOSprinklerData.java` : constante `SPRINKLE_DATA_SIZE=169`.
+- [x] `DeviceListResponse.java` : pas de parcours de 169 octets, extraction de 40 + 128 octets.
+- [x] Identifier que le 169e octet n'est pas exploité par le constructeur.
+- [ ] Déterminer la signification éventuelle du 169e octet à partir d'autres éléments du code ou de réponses déjà disponibles, sans test actif sur le matériel.
+- [ ] Vérifier le traitement de l'encodage de la réponse de liste.
 
-### Priorité 2 — Commandes locales et réseau
-
-- [ ] `GetApDeviceSettingTask.java`.
-- [ ] `SetApDeviceSettingTask.java`.
-- [ ] `HttpAPUrl.java`.
-- [ ] `HttpHelper.java`.
-- [ ] `HttpUtil.java`.
-- [ ] `SprinklerCommand.java`.
-- [ ] Références à `SM_DEVICE_FEEDBACK`.
-- [ ] Références à `SM_IDENTIFY_DEVICE`.
-- [ ] Identifier les IP et ports locaux.
-- [ ] Relier les méthodes d'interface aux tâches HTTP locales.
-- [ ] Déterminer si les commandes d'arrosage utilisent HTTP local, BLE ou un autre mécanisme.
-
-### Priorité 3 — Programmation et états
+### Priorité 4 — Programmation et états
 
 - [x] `NormalTimer.java` : structure et conversions principales.
 - [x] `SpecialTimer.java` : structure et conversions principales.
@@ -1424,13 +1862,12 @@ Il faudra identifier les adresses IP utilisées, les méthodes HTTP, les corps d
 - [ ] `Schedule.java`.
 - [ ] `DeviceTimer.java`.
 - [ ] `DeviceCommand.java`.
-- [ ] `IOSprinklerData.java`.
 - [ ] Signification des six octets `ScheduleSetting`.
 - [ ] Valeurs et enums des huit octets `Command`.
 - [ ] Relations entre programmes et canaux/vannes.
 - [ ] Signification exacte des modèles de programme spécial.
 
-### Priorité 4 — Bluetooth
+### Priorité 5 — Bluetooth
 
 - [ ] `BLEService.java`.
 - [ ] UUID des services et caractéristiques.
@@ -1439,16 +1876,20 @@ Il faudra identifier les adresses IP utilisées, les méthodes HTTP, les corps d
 - [ ] Relation entre BLE et configuration Wi-Fi.
 - [ ] Déterminer si BLE est une voie de commande ou seulement de provisionnement.
 
-### Priorité 5 — Authentification et dépendances cloud
+### Priorité 6 — Authentification et dépendances cloud
 
+- [x] Domaine par défaut de l'API distante.
+- [x] Endpoints distants de gestion et de configuration.
+- [x] Transmission du Bearer token dans `UploadDeviceTask`.
+- [x] Transmission du Bearer token dans le chemin de lecture de configuration distante.
 - [ ] Références à `setServerDomain()` dans l'ensemble de l'APK.
 - [ ] Chaînes d'URL et adresses IP dans les ressources.
 - [ ] Authentification et gestion des jetons.
-- [ ] Dépendance effective au serveur distant.
+- [ ] Dépendance effective au serveur distant pour chaque fonction.
 - [ ] Vérifier si une session ou un jeton obtenu initialement est indispensable au pilotage local.
 - [ ] Déterminer le comportement en cas d'indisponibilité du serveur fabricant.
 
-### Priorité 6 — Compatibilité matérielle
+### Priorité 7 — Compatibilité matérielle
 
 - [x] Valeurs logicielles de `Product.java`.
 - [ ] Identifier l'identifiant produit réel de l'A113W.
@@ -1457,11 +1898,11 @@ Il faudra identifier les adresses IP utilisées, les méthodes HTTP, les corps d
 - [ ] Déterminer les fonctions communes et spécifiques.
 - [ ] Vérifier la compatibilité du second programmateur.
 
-### Priorité 7 — Faisabilité Home Assistant
+### Priorité 8 — Faisabilité Home Assistant
 
 Cette étape ne commencera qu'après compréhension suffisante du protocole local.
 
-- [ ] Identifier le protocole local réellement utilisable.
+- [ ] Identifier le protocole local réellement utilisable en mode station.
 - [ ] Définir les opérations de lecture et d'écriture.
 - [ ] Définir une représentation fiable des états et programmes.
 - [ ] Étudier une intégration Home Assistant locale.
@@ -1469,6 +1910,7 @@ Cette étape ne commencera qu'après compréhension suffisante du protocole loca
 - [ ] Définir le comportement en cas de perte du réseau ou de Home Assistant.
 - [ ] Préserver l'exécution autonome des programmes enregistrés dans les programmateurs, si le matériel le permet.
 - [ ] Étudier l'accès distant via l'infrastructure existante et l'entrée Homer.
+- [ ] Définir les restrictions réseau et les règles d'accès aux endpoints locaux.
 
 ---
 
@@ -1497,7 +1939,17 @@ Cette étape ne commencera qu'après compréhension suffisante du protocole loca
 | 09/11/2026 | `IOBody.java` | Ancien corps de 129 octets, configuration de 6 octets, checksum textuel modulo 128 |
 | 09/11/2026 | `IOHeader.java` | En-tête ancien de 40 octets : nom 20, MAC 12, config 8 |
 | 09/11/2026 | `DataParser.java` | Ancien parseur : Info 48, timers 66, config 6, commandes 9 |
-| 09/11/2026 | `DeviceListResponse.java` | Parsing d'un en-tête de 40 octets suivi de 128 octets utiles ; pas global des enregistrements encore à confirmer |
+| 09/11/2026 | `IOSprinklerData.java` | `SPRINKLE_DATA_SIZE=169`, conteneur Parcelable avec IOHeader et IOBody |
+| 09/11/2026 | `DeviceListResponse.java` | Parcours par pas de 169 octets ; copie de 40 octets d'en-tête et 128 octets de données ; dernier octet non exploité |
+| 09/11/2026 | `DeviceAddPresenter.java` | ESPTouch fournit BSSID et adresse IP ; interrogation HTTP locale pendant l'identification |
+| 09/11/2026 | `HttpUrlUtil.java` | `/TYPE_BRAND` et `/feedback` ; marque attendue `LinkU` ; statut lu dans `status_code` |
+| 09/11/2026 | `UploadDeviceTask.java` | POST cloud `user/uploadDevice`, MAC, nom, fuseau horaire et Bearer token ; lecture de `productID` dans la réponse |
+| 09/11/2026 | `HttpAPUrl.java` | Endpoints locaux AP : `/typeAndMAC`, `/connectType`, `/SSIDPwd`, `/stationInfo`, `/property`, `/TIME`, `/Read128`, `/GetHistory` |
+| 09/11/2026 | `HttpHelper.java` | Appels modernes AP sans Bearer token ajouté par le client ; délais de 30 secondes |
+| 09/11/2026 | `HttpUtil.java` | Différences entre les surcharges HTTP avec et sans Bearer token |
+| 09/11/2026 | `WifiDeviceRepo.java` | Chemins modernes locaux pour lecture `/TIME`, écriture `/Read128` et historique `/GetHistory` |
+| 09/11/2026 | Configuration réseau Mac mini | Mac relié au réseau domestique en Wi-Fi et au NAS par Ethernet direct ; NAS relié séparément au LAN |
+| 09/11/2026 | Analyse du chemin non-AP | Fonctions examinées utilisant le chemin cloud lorsque `device.isAp()` est faux ; disponibilité d'une API locale en station non démontrée |
 
 ---
 
@@ -1521,13 +1973,17 @@ Modèle V2 :
 - `data/device/schedule/NormalTimer.java`
 - `data/device/schedule/SpecialTimer.java`
 
-Autres éléments :
+Communications :
 
-- `enums/Product.java`
-- `DeviceType.java`
-- `task/DeviceListResponse.java`
 - `mqtt/MQTTHelper.java`
+- `mqtt/topic/Topic.java`
 - `utility/HttpUrlUtil.java`
+- `utility/HttpAPUrl.java`
+- `utility/HttpUtil.java`
+- `network/HttpHelper.java`
+- `task/DeviceListResponse.java`
+- `task/UploadDeviceTask.java`
+- `Presenter/DeviceAddPresenter.java`
 
 ### 12.2 Découvertes essentielles
 
@@ -1536,52 +1992,50 @@ Autres éléments :
 3. Le parseur V2 utilise huit octets de commandes.
 4. L'ancien `IOBody` expose `BODY_SIZE=129` et un checksum textuel modulo 128.
 5. Le modèle V2 contient 128 octets de données utiles et ajoute un checksum en 129e position.
-6. `DeviceListResponse` lit un en-tête de 40 octets puis 128 octets de données utiles.
-7. La constante `IOSprinklerData.SPRINKLE_DATA_SIZE` et le pas global des enregistrements restent à vérifier.
-8. Les six timers peuvent être normaux ou spéciaux.
-9. L'ordre des jours est confirmé : lundi à dimanche, bits 0 à 6.
-10. Les heures de `SpecialTimer` utilisent un encodage où chaque octet stocké vaut la valeur affichée augmentée de 1.
-11. Les identifiants de produits logiciels sont connus, mais l'identifiant réel de l'A113W n'est pas encore établi.
-12. MQTT est démontré pour la découverte et l'appairage, pas pour les commandes d'arrosage.
-13. L'API HTTP distante de gestion et de configuration est démontrée.
-14. Les chemins de communication locale restent à examiner.
+6. `DeviceListResponse` parcourt les enregistrements par pas de 169 octets.
+7. Pour chaque enregistrement, il exploite 40 octets d'en-tête et 128 octets de données V2.
+8. Le 169e octet n'est pas exploité par le constructeur de `DeviceListResponse`. Sa fonction reste inconnue.
+9. Les six timers peuvent être normaux ou spéciaux.
+10. L'ordre des jours est confirmé : lundi à dimanche, bits 0 à 6.
+11. Les heures de `SpecialTimer` utilisent un encodage où chaque octet stocké vaut la valeur affichée augmentée de 1.
+12. Les identifiants de produits logiciels sont connus, mais l'identifiant réel de l'A113W n'est pas encore établi.
+13. MQTT est démontré pour la découverte et l'appairage, pas pour les commandes d'arrosage.
+14. ESPTouch fournit une adresse IP utilisée pour interroger le programmateur pendant son identification.
+15. Les endpoints `/TYPE_BRAND` et `/feedback` sont utilisés en HTTP local pendant cette identification.
+16. Après cette identification, `UploadDeviceTask` transmet au cloud la MAC, le nom et le fuseau horaire, avec un Bearer token. L'adresse IP n'est pas transmise explicitement.
+17. L'application possède une API HTTP locale en mode AP, avec notamment `/TIME`, `/Read128` et `/GetHistory`.
+18. Les appels modernes AP de `HttpHelper` n'ajoutent pas de Bearer token.
+19. Les chemins de fonctions examinés utilisent le cloud lorsque `device.isAp()` est faux.
+20. La disponibilité de l'API locale lorsque le programmateur est en mode station reste inconnue.
+21. Le Mac mini est relié au réseau domestique par Wi-Fi et au NAS par Ethernet direct. Le NAS possède sa propre liaison Ethernet au réseau local.
 
 ### 12.3 Prochaine étape immédiate
 
-**Examiner `IOSprinklerData.java` et la constante `SPRINKLE_DATA_SIZE`.**
+**Rechercher dans le code comment l'adresse IP du programmateur est utilisée après l'identification ESPTouch, et déterminer si une voie HTTP locale existe en mode station.**
 
-Objectif : vérifier le pas des enregistrements parcourus par `DeviceListResponse` et déterminer comment le flux global associe :
+L'analyse doit rester statique et en lecture seule.
 
-- les 40 octets d'en-tête ;
-- les 128 octets de données utiles ;
-- le checksum éventuel ;
-- les éventuels octets supplémentaires ou séparateurs entre les enregistrements.
+La priorité est de suivre les usages de :
 
-La distinction entre les 128 octets utiles et les 129 octets avec checksum est déjà comprise. Il ne faut pas rouvrir cette question.
+- `SM_IDENTIFY_DEVICE`
+- `SM_DEVICE_FEEDBACK`
+- `getInetAddress()`
+- `getBssid()`
+- `getApDeviceSetting()`
+- `setApDeviceSetting()`
+- `device.isAp()`
 
-Commande préparée :
+Il faudra notamment examiner les autres méthodes de découverte et les chemins de communication des fonctions non-AP.
 
-```bash
-SRC="$HOME/Sprinkler-JADX/sources/com/ioshop/sprinkler"
+### 12.4 Étape suivante après l'analyse du mode station
 
-echo "========== IOSPRINKLERDATA =========="
-
-cat "$SRC/data/IOSprinklerData.java"
-```
-
-**Procédure :** exécuter uniquement cette commande, attendre le résultat, puis l'analyser avant de décider de la suivante.
-
-### 12.4 Étape suivante après vérification du pas des enregistrements
-
-Reprendre l'investigation réseau locale :
-
-1. `HttpAPUrl.java`.
-2. `GetApDeviceSettingTask.java`.
-3. `SetApDeviceSettingTask.java`.
-4. `SprinklerCommand.java`.
-5. `HttpHelper.java` et `HttpUtil.java`.
-
-L'objectif est de suivre une commande depuis l'action dans l'application jusqu'à la méthode qui effectue réellement l'échange réseau.
+1. Examiner les appels à `SprinklerCommand.java`.
+2. Relier chaque fonction de commande à son chemin local ou distant.
+3. Examiner les autres ViewModels et Presenters pour identifier d'éventuelles communications locales en mode station.
+4. Étudier les classes BLE pour déterminer si BLE constitue une voie de commande indépendante.
+5. Vérifier le traitement de l'adresse IP et de la MAC dans le modèle Device.
+6. Examiner les références à `setServerDomain()` dans l'ensemble de l'APK.
+7. Poursuivre l'analyse de l'authentification et des dépendances cloud.
 
 Ne pas envoyer de commande au programmateur pendant cette phase.
 
@@ -1600,6 +2054,12 @@ https://github.com/testuflo-ft/docs-serveur-ia/blob/main/SPRINKLER-REVERSE-ENGIN
 Branche :
 
 `main`
+
+Dernière version de référence consultée avant cette révision :
+
+- SHA : `79e86df358e507e88d24a3ff3c4d7aecc52e8365`
+- Document : 1 630 lignes.
+- Structure : 13 sections.
 
 Ce document est le référentiel technique cumulatif du projet Sprinkler. Il doit être consulté lors de toute reprise du travail.
 
