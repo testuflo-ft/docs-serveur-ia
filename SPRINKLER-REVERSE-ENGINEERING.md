@@ -12,7 +12,7 @@ Objectif : comprendre les protocoles, les structures de données et les mécanis
 
 ### 1.1 Objectif fonctionnel
 
-L'utilisateur possède un programmateur **A113W**. L'objectif à terme est d'étudier le pilotage de ce programmateur et d'un second programmateur depuis une installation Home Assistant, sans dépendre obligatoirement de l'application mobile Sprinkler ni du serveur d'authentification du fabricant.
+Le matériel étudié est le programmateur **A113W**. L'objectif à terme est d'étudier le pilotage de ce programmateur et d'un second programmateur depuis Home Assistant, sans dépendre obligatoirement de l'application mobile Sprinkler ni du serveur d'authentification du fabricant.
 
 Architecture envisagée, sous réserve de faisabilité technique :
 
@@ -32,7 +32,7 @@ Home Assistant
 
 Homer reste le portail d'accès. Home Assistant assure l'interface de commande et les automatisations.
 
-L'accès distant doit pouvoir s'appuyer sur l'infrastructure réseau déjà en place, sans faire transiter le trafic local par Tailscale lorsque les appareils communiquent directement sur le LAN.
+L'accès distant doit pouvoir s'appuyer sur l'infrastructure réseau existante, sans faire transiter le trafic local par Tailscale lorsque les appareils communiquent directement sur le LAN.
 
 **Cet objectif d'autonomie est une exigence à vérifier, pas une capacité acquise.**
 
@@ -433,7 +433,7 @@ Cela ne prouve pas que les commandes doivent nécessairement passer par ce serve
 
 ### 7.1 Deux générations de classes de données
 
-L'examen des fichiers montre deux ensembles de classes :
+L'examen des fichiers montre deux ensembles de classes.
 
 **Ancien modèle :**
 
@@ -505,17 +505,11 @@ public int calCheckSum() {
 
 - `IOBody.BODY_SIZE = 129`.
 - `IOBody.BODY_CONFIG_SIZE = 6`.
-- Le corps ancien contient un objet d'information, une liste de timers, une configuration de six octets et un objet de commande.
-- Le checksum ancien est calculé sur les caractères de la chaîne renvoyée par `getBodyData()`, modulo 128.
+- L'ancien modèle assemble un bloc composé d'un objet d'information, d'une liste de timers, d'une configuration de six octets et d'un objet de commande.
+- Le checksum de cette classe est calculé sur les caractères de la chaîne renvoyée par `getBodyData()`, modulo 128.
+- `calCheckSum()` est un calcul distinct du checksum binaire du modèle V2.
 
-**À VÉRIFIER :**
-
-- Où le résultat de `calCheckSum()` est ajouté au corps.
-- Si les 129 octets incluent le checksum ou correspondent uniquement aux données.
-- L'encodage exact de `getContent()` dans chaque classe.
-- La relation entre ce checksum textuel et le checksum binaire du modèle V2.
-
-Ne pas confondre ce calcul avec celui de `Device.calculateCheckSum()`.
+La signification exacte de ce checksum ancien dans le transport reste à confirmer. Il ne faut pas le confondre avec l'octet de checksum V2.
 
 ### 7.3 Ancien modèle : DataParser
 
@@ -589,6 +583,7 @@ Elle crée un `DeviceTimer`.
 - Chaque timer ancien a une structure uniforme.
 - L'ancien parseur réserve neuf octets aux commandes.
 - La zone de configuration occupe six octets.
+- La somme des quatre blocs est bien de 129 octets : 48 + 66 + 6 + 9.
 
 ### 7.4 Ancien modèle : IOHeader
 
@@ -628,7 +623,7 @@ Les méthodes Parcelable servent à transporter l'objet dans Android. Elles ne d
 
 Le sens des huit octets `config` reste inconnu.
 
-### 7.5 Format V2 : longueur et réponse
+### 7.5 Format V2 : longueur de la réponse et checksum
 
 Fichier :
 
@@ -682,7 +677,14 @@ Fichiers examinés :
 | Command | 120 | 8 | 128 |
 | Checksum | 128 | 1 | 129 |
 
-**FAIT DÉMONTRÉ :** le modèle V2 reconstruit 128 octets de données utiles, puis ajoute un checksum en 129e position.
+**FAIT DÉMONTRÉ :** le modèle V2 contient 128 octets de données utiles. Un octet de checksum est ajouté à la suite, ce qui donne un bloc complet de 129 octets.
+
+La distinction est donc la suivante :
+
+- **128 octets** : données utiles du modèle V2.
+- **129 octets** : données utiles suivies de leur checksum.
+
+Ce ne sont pas deux formats contradictoires.
 
 ### 7.7 Device.setData()
 
@@ -709,7 +711,7 @@ La méthode `getData()` :
 5. Ajoute les 8 octets de `Command.toBytes()`.
 6. Ajoute le résultat de `calculateCheckSum()`.
 
-**FAIT DÉMONTRÉ :** `getData()` reconstruit un tableau de 129 octets.
+**FAIT DÉMONTRÉ :** `getData()` reconstruit 128 octets de données puis ajoute un octet de checksum. Le tableau retourné contient donc 129 octets.
 
 ### 7.9 Calcul du checksum V2
 
@@ -750,24 +752,13 @@ C = \left(\sum_{i=0}^{127} b_i\right)\bmod 256
 
 Le checksum est ajouté après les 128 octets. Il n'est pas inclus dans sa propre somme.
 
-### 7.10 Incohérence à résoudre : 128, 129 et enregistrement avec en-tête
-
-Fichier :
-
-`data/device/Device.java`
-
-Les constantes observées sont :
-
-- `headSize = 40`
-- `totalSize = 128`
-
-La classe `Device.getData()` renvoie pourtant 129 octets, checksum compris.
+### 7.10 DeviceListResponse : en-tête et taille des enregistrements
 
 Fichier :
 
 `task/DeviceListResponse.java`
 
-Le constructeur procède ainsi :
+Le constructeur procède notamment ainsi :
 
 ```java
 int headSize = Device.INSTANCE.getHeadSize();
@@ -784,32 +775,39 @@ System.arraycopy(bytes, headSize2, bArr2, 0, totalSize);
 Device deviceConvertDevice = DataParserV2.convertDevice(bArr2);
 ```
 
+Constantes observées dans `Device.java` :
+
+- `headSize = 40`
+- `totalSize = 128`
+
 Le code :
 
 - Copie 40 octets d'en-tête.
 - Appelle `DataParserV2.getHeader()`.
-- Copie ensuite `Device.totalSize`, soit 128 octets selon la constante observée.
+- Copie ensuite 128 octets.
 - Passe ces 128 octets à `DataParserV2.convertDevice()`.
 
-Le parseur V2 utilise les 128 premiers octets pour construire le Device et ne traite pas le checksum dans `convertDevice()`.
+`DataParserV2.convertDevice()` construit le Device à partir des 128 octets utiles. Il ne traite pas le checksum.
 
 **FAITS DÉMONTRÉS :**
 
 - `headSize` vaut 40.
 - `totalSize` vaut 128 dans `Device`.
-- `DeviceListResponse` copie 40 octets d'en-tête, puis 128 octets de données.
+- `DeviceListResponse` copie 40 octets d'en-tête puis 128 octets de données utiles.
 - `Device.getData()` reconstruit 129 octets avec checksum.
 - `DataResult` traite séparément le checksum à l'offset 128.
 
-**À VÉRIFIER IMPÉRATIVEMENT :**
+Le découpage 128/129 est donc déjà expliqué par la distinction entre les données utiles et leur checksum.
+
+**POINT RESTANT À VÉRIFIER :**
 
 - La valeur de `IOSprinklerData.SPRINKLE_DATA_SIZE`.
-- La longueur réelle des enregistrements parcourus par `DeviceListResponse`.
-- Si le checksum est absent de certains flux ou simplement ignoré par `convertDevice()`.
-- Si `totalSize` désigne les données sans checksum dans ce contexte.
-- Si la réponse de 129 octets de `GetDeviceSettingTask` et les enregistrements de `DeviceListResponse` sont deux formats de transport distincts.
+- La longueur et le pas exacts des enregistrements parcourus par `DeviceListResponse`.
+- La façon dont le checksum est présent ou non dans ce flux particulier.
 
-Ne pas affirmer que la taille d'un enregistrement complet est 169 octets avant d'avoir vérifié `SPRINKLE_DATA_SIZE`.
+Cette question porte sur le format global des enregistrements et leur pas de parcours, pas sur la distinction entre 128 et 129 octets.
+
+Ne pas réintroduire la distinction 128/129 comme une incohérence non résolue.
 
 ### 7.11 Conclusion sur les formats
 
@@ -820,9 +818,19 @@ Ils diffèrent notamment sur la zone de commandes :
 - Ancien parseur : 9 octets.
 - Parseur V2 : 8 octets.
 
-L'ancien modèle expose un `IOBody.BODY_SIZE` de 129 octets et un checksum textuel modulo 128. Le modèle V2 reconstruit 128 octets de données et ajoute un checksum binaire en 129e position.
+Dans le modèle V2 :
 
-Il est possible que ces différences correspondent à deux générations de format ou à des contextes de transport différents. Cela reste à démontrer.
+- 128 octets constituent les données utiles.
+- L'octet à l'offset 128 est le checksum.
+- Le bloc complet contient donc 129 octets.
+
+Dans l'ancien modèle :
+
+- `DataParser.getBody()` découpe 129 octets : 48 + 66 + 6 + 9.
+- `IOBody.BODY_SIZE` vaut 129.
+- `IOBody.calCheckSum()` calcule une somme des caractères modulo 128.
+
+Ces deux mécanismes de checksum ne doivent pas être confondus.
 
 ---
 
@@ -1381,17 +1389,18 @@ Il faudra identifier les adresses IP utilisées, les méthodes HTTP, les corps d
 
 ## 10. Points restant à examiner et ordre de reprise
 
-### Priorité 1 — Résoudre l'incohérence de taille
+### Priorité 1 — Format global des enregistrements
 
 - [x] `Device.java` : constantes, tailles, découpage et reconstruction.
 - [x] `DataResult.java` : marqueur et checksum.
-- [x] `IOBody.java` : ancien `BODY_SIZE=129`, configuration de 6 octets, checksum textuel modulo 128.
+- [x] `IOBody.java` : ancien `BODY_SIZE=129`, configuration de 6 octets et checksum textuel modulo 128.
 - [x] `IOHeader.java` : en-tête de 40 octets, champs 20/12/8.
 - [x] `DataParser.java` : ancien parseur, commandes sur 9 octets.
 - [x] `DataParserV2.java` : nouveau parseur, commandes sur 8 octets.
+- [x] Distinction entre 128 octets de données V2 et 129 octets avec checksum.
 - [ ] `IOSprinklerData.java` : valeur exacte de `SPRINKLE_DATA_SIZE`.
-- [ ] Résoudre la différence entre `totalSize=128`, `getData()` de 129 octets et `IOBody.BODY_SIZE=129`.
-- [ ] Confirmer le format exact des enregistrements de `DeviceListResponse`.
+- [ ] Confirmer le pas exact des enregistrements parcourus par `DeviceListResponse`.
+- [ ] Vérifier comment le checksum est traité dans le flux de liste des appareils.
 
 ### Priorité 2 — Commandes locales et réseau
 
@@ -1476,7 +1485,7 @@ Cette étape ne commencera qu'après compréhension suffisante du protocole loca
 | 09/11/2026 | `UploadDeviceTask.java` | Enregistrement HTTP du matériel avec MAC, nom, fuseau horaire et jeton |
 | 09/11/2026 | `GetDeviceSettingTask.java` | Réponse binaire de 129 octets reconnue |
 | 09/11/2026 | `DataResult.java` | Marqueur à l'offset 127 et checksum à l'offset 128 |
-| 09/11/2026 | `Device.java` | Découpage et reconstruction des 128 octets de données établis |
+| 09/11/2026 | `Device.java` | 128 octets de données utiles, checksum ajouté en 129e position |
 | 09/11/2026 | `Device.java` | Calcul du checksum sur les 128 octets reconstruits |
 | 09/11/2026 | `Info.java` | Ordre exact des 19 champs et offsets des 48 octets établis |
 | 09/11/2026 | `Command.java` | Ordre exact des 8 champs et offsets globaux 120–127 établis |
@@ -1488,7 +1497,7 @@ Cette étape ne commencera qu'après compréhension suffisante du protocole loca
 | 09/11/2026 | `IOBody.java` | Ancien corps de 129 octets, configuration de 6 octets, checksum textuel modulo 128 |
 | 09/11/2026 | `IOHeader.java` | En-tête ancien de 40 octets : nom 20, MAC 12, config 8 |
 | 09/11/2026 | `DataParser.java` | Ancien parseur : Info 48, timers 66, config 6, commandes 9 |
-| 09/11/2026 | `DeviceListResponse.java` | Parsing V2 d'un en-tête de 40 octets suivi de `Device.totalSize` octets ; valeur de `SPRINKLE_DATA_SIZE` encore à vérifier |
+| 09/11/2026 | `DeviceListResponse.java` | Parsing d'un en-tête de 40 octets suivi de 128 octets utiles ; pas global des enregistrements encore à confirmer |
 
 ---
 
@@ -1526,9 +1535,9 @@ Autres éléments :
 2. L'ancien parseur utilise neuf octets de commandes.
 3. Le parseur V2 utilise huit octets de commandes.
 4. L'ancien `IOBody` expose `BODY_SIZE=129` et un checksum textuel modulo 128.
-5. Le modèle V2 reconstruit 128 octets de données et ajoute un checksum en 129e position.
-6. `DeviceListResponse` lit un en-tête de 40 octets puis `Device.totalSize`, qui vaut 128.
-7. La constante `IOSprinklerData.SPRINKLE_DATA_SIZE` n'a pas encore été vérifiée.
+5. Le modèle V2 contient 128 octets de données utiles et ajoute un checksum en 129e position.
+6. `DeviceListResponse` lit un en-tête de 40 octets puis 128 octets de données utiles.
+7. La constante `IOSprinklerData.SPRINKLE_DATA_SIZE` et le pas global des enregistrements restent à vérifier.
 8. Les six timers peuvent être normaux ou spéciaux.
 9. L'ordre des jours est confirmé : lundi à dimanche, bits 0 à 6.
 10. Les heures de `SpecialTimer` utilisent un encodage où chaque octet stocké vaut la valeur affichée augmentée de 1.
@@ -1541,13 +1550,14 @@ Autres éléments :
 
 **Examiner `IOSprinklerData.java` et la constante `SPRINKLE_DATA_SIZE`.**
 
-Objectif : résoudre la différence entre :
+Objectif : vérifier le pas des enregistrements parcourus par `DeviceListResponse` et déterminer comment le flux global associe :
 
-- 40 octets d'en-tête ;
-- `Device.totalSize = 128` ;
-- `Device.getData()` = 129 octets ;
-- `IOBody.BODY_SIZE = 129` ;
-- l'ancien corps qui contient neuf octets de commandes.
+- les 40 octets d'en-tête ;
+- les 128 octets de données utiles ;
+- le checksum éventuel ;
+- les éventuels octets supplémentaires ou séparateurs entre les enregistrements.
+
+La distinction entre les 128 octets utiles et les 129 octets avec checksum est déjà comprise. Il ne faut pas rouvrir cette question.
 
 Commande préparée :
 
@@ -1561,7 +1571,7 @@ cat "$SRC/data/IOSprinklerData.java"
 
 **Procédure :** exécuter uniquement cette commande, attendre le résultat, puis l'analyser avant de décider de la suivante.
 
-### 12.4 Étape suivante après résolution des tailles
+### 12.4 Étape suivante après vérification du pas des enregistrements
 
 Reprendre l'investigation réseau locale :
 
