@@ -1,4 +1,3 @@
-cat > SPRINKLER-REVERSE-ENGINEERING.md <<'EOF'
 # Sprinkler — Reverse Engineering
 
 **Dernière mise à jour :** 9 novembre 2026  
@@ -730,9 +729,3 @@ https://github.com/testuflo-ft/docs-serveur-ia/blob/main/SPRINKLER-REVERSE-ENGIN
 Ce document est le référentiel technique cumulatif du projet Sprinkler. Il doit être consulté lors de toute reprise du travail.
 
 Toute mise à jour doit préserver les faits déjà établis, distinguer les hypothèses et actualiser le journal des découvertes.
-
-EOF
-
-echo "Document Markdown créé :"
-pwd
-ls -lh SPRINKLER-REVERSE-ENGINEERING.md
