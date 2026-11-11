@@ -1,6 +1,6 @@
 # Livret Technique — Serveur IA Mac mini + Synology
 
-*Version 0.9 — 8 novembre 2026*
+*Version 1.0 — 11 novembre 2026*
 
 **Statuts utilisés dans ce document :**
 - ✅ Vérifié — constat direct, sortie de commande ou code examiné
@@ -604,18 +604,17 @@ La suppression physique est récursive mais la purge des index ne l'est pas. Sou
 
 **Action :** parcours récursif explicite avant suppression physique ; vérifier les rejets async ; tester avec arborescence imbriquée.
 
-**PUR-02 v4e + fix#1b — Statut correctif (2026-11-05) :** candidat validé par 52/52 tests — 22 Suite A (unitaires), 16 Suite B (handler HTTP), 14 Suite C (sécurité chemins). Points couverts :
+**PUR-02-E — Statut final (2026-11-10/11) :** 3 candidats (`candidate-purgeDocument-v4e.js` SHA `90a21b04…`, `candidate-documents.js` SHA `de9c5860…`, `candidate-lance-index-v4f.js` SHA `8103f042…`) ; 60/60 tests PASS (22A v4f + 16B + 14C + 8L/R) + 4 scénarios E2E PASS (instance jetable `pur02-e2e-runtime-20261110`). Points couverts :
 - `purgeFolder()` avorte si un sous-répertoire est présent (UNSUPPORTED_FOLDER_ENTRY) → plus d'index orphelin (ALLM-16 corrigé, non déployé)
 - `purgeDocument()` : `_getWorkspacesStrict()` propage les erreurs SQL ; `normalizePath` appliqué avant toutes les opérations
-- `deleteDocumentFromNamespace()` : requête Prisma directe, erreurs SQL et LanceDB propagées
+- `deleteDocumentFromNamespace()` : requête Prisma directe, erreurs SQL et LanceDB propagées ; LanceDB v4f → `true` pour no-ops (fix rollback `addDocuments()`)
 - `removeDocuments()` : `_getStrict()` sans try/catch ; LanceDB avant SQL ; `prisma.$transaction([...])` pour atomicité SQL-SQL
-- Défaut D-2 (fix#1b) : vérification pré-normalisation → 400 `FOLDER_NAME_INVALID`
+- Défaut D-2 (fix#1b) : vérification pré-normalisation → 400 `FOLDER_NAME_INVALID` (fix#1b = `purgeDocument-v4e` **uniquement**, ≠ LanceDB v4f)
 - Codes d'erreur canoniques : `FOLDER_NAME_REQUIRED`, `FOLDER_NAME_INVALID`, `FOLDER_OUTSIDE_DOCUMENTS`, `FOLDER_PROTECTED`, `FOLDER_NOT_FOUND`
-- Limite L-1 (non-atomicité LanceDB/SQL) confirmée par S05 ; remédiation manuelle documentée
-- Contre-revue indépendante favorable (ChatGPT, 2026-11-04). Patch SHA-256 `86043b31…`.
+- Limite L-1 (non-atomicité LanceDB/SQL) : **confirmée empiriquement par E2E-04** ; remédiation manuelle documentée
+- Contre-revue indépendante favorable (ChatGPT, 2026-11-04 et 2026-11-10). Patch SHA-256 `86043b31…`.
+- Lab détruit après E2E. Production inchangée. **Non déployé — déploiement requiert autorisation explicite de Florian.**
 Voir section 14.22 et fichier `PUR-02-livraison.md`.
-
-**Compagnon LanceDB v4f (2026-11-08) :** anomalie dans `deleteDocumentFromNamespace()` v4 : retournait `false` pour les no-ops (namespace absent ou 0 vecteur). Dans `addDocuments()`, `vectorsRemoved = deleted !== false` → `DocumentVectors.delete()` non appelé → nettoyage SQL silencieusement sauté lors d'un rollback. `candidate-lance-index-v4f.js` corrige → `return true` pour no-ops. Impact sur PUR-02-E : aucun (retour ignoré dans `removeDocuments()`). Impact sur rollback `addDocuments()` : corrigé. 8/8 PASS. SHA-256 `8103f042…`. Voir section 14.22.
 
 ### 14.13 Plan de test consolidé — avant d'activer n8n
 
@@ -640,7 +639,7 @@ Voir section 14.22 et fichier `PUR-02-livraison.md`.
 | RAG-04 | Import | Échec d'embedding/indexation simulé | Échec explicite, pas de faux `success: true` ; comparer avec le comportement 1.19.0 (propagation de `embedded.success`) | À exécuter |
 | RAG-05 | Cohérence | Échec SQL après insertion LanceDB | Retour arrière des vecteurs tenté (code amont) ou état de réparation signalé ; contrôler SQL, `DocumentVectors` et LanceDB | À exécuter |
 | PUR-01 | Purge | Purge dossier factice avec sous-dossiers | Pas de référence résiduelle non signalée dans SQL, `DocumentVectors`, LanceDB ou cache | Partiel en laboratoire [LAB] : purge récursive, dossier supprimé après succès et conservé après erreur simulée, échec simulé de `Document.removeDocuments` propagé ; vraie panne LanceDB/SQL non testée. **v4e + fix#1b (2026-11-05) : 52/52 PASS (22A+16B+14C) ; S01-S09 couverts ; test HTTP de bout en bout restant.** |
-| PUR-02 | Contrat HTTP | `custom-documents`, dossier absent, chemin invalide/imbriqué | `protected`/`not_found`/`invalid` distincts ; aucun faux succès | Candidat v4e + fix#1b [LAB] (05/11/2026) : 52/52 PASS (22A+16B+14C) ; `FOLDER_NAME_REQUIRED`, `FOLDER_NAME_INVALID`, `FOLDER_OUTSIDE_DOCUMENTS`, `FOLDER_PROTECTED`, `FOLDER_NOT_FOUND`, `UNSUPPORTED_FOLDER_ENTRY` ; tests traversée avec cible existante (C-11..C-14) ; pas de test HTTP de bout en bout ; `partial_failure` non rapporté. **Compagnon v4f (08/11/2026) :** `deleteDocumentFromNamespace()` → `true` pour no-ops ; 8/8 PASS ; sans impact sur PUR-02-E |
+| PUR-02 | Contrat HTTP | `custom-documents`, dossier absent, chemin invalide/imbriqué | `protected`/`not_found`/`invalid` distincts ; aucun faux succès | **PUR-02-E (10/11/2026) :** 60/60 PASS (22A v4f + 16B + 14C + 8L/R) ; 4 scénarios E2E PASS ; `FOLDER_NAME_REQUIRED`, `FOLDER_NAME_INVALID`, `FOLDER_OUTSIDE_DOCUMENTS`, `FOLDER_PROTECTED`, `FOLDER_NOT_FOUND`, `UNSUPPORTED_FOLDER_ENTRY` ; traversée cible existante (C-11..C-14) ; LanceDB v4f no-ops → `true` ; L-1 confirmée empiriquement (E2E-04) ; lab détruit, production inchangée. **Non déployé.** |
 | OPS-01 | Sauvegarde | Sauvegarde puis restauration isolée (dont l'archive `storage-anythingllm.tar.gz` du 25/10) | Restauration fonctionnelle et intégrité vérifiée | À exécuter |
 | OPS-02 | Protection | Protection activée en isolé (valeur `1`, puis valeur `0` : la présence seule suffit-elle ?) ; suppression d'un workspace factice par les trois routes (`/admin/workspaces/:id`, `/workspace/:slug`, `/v1/workspace/:slug`) | 403 « Workspace deletion is blocked by the system administrator. » ; workspace préservé | Production : test unitaire du middleware PASS (403, `next()` non appelé) [PROD] ; test HTTP authentifié par route non fait ; laboratoire : à exécuter |
 | DOS-01 | Limite HTTP | Inspection statique de l'image de laboratoire pour `/api/embed` | Code réellement présent documenté ; présence seule ne prouve pas l'activité | Inspection statique de l'image active rapportée le 25/10 [IMG] ; à rejouer sur l'image de laboratoire |
@@ -704,6 +703,12 @@ Voir section 14.22 et fichier `PUR-02-livraison.md`.
 
 **Mise à jour 2026-11-08 :**
 - **Compagnon LanceDB v4f** : `candidate-lance-index-v4f.js` — `deleteDocumentFromNamespace()` retourne `true` pour les no-ops ; 8/8 PASS (L-01..L-05 + R-01..R-03) ; corrections audit ChatGPT (chemin portable, R-02 vrai test d'intégration) ; SHA `8103f042…`. Sans impact sur PUR-02-E (non déployé). Voir section 14.22.
+
+**Mise à jour 2026-11-10/11 :**
+- **PUR-02-E VALIDÉ E2E** : 4 scénarios E2E PASS sur instance réelle jetable (`pur02-e2e-runtime-20261110`, image dérivée de production `sha256:ddf73304…`, 40 migrations Prisma) : E2E-01 (purge dossier valide), E2E-02 (dossier absent → 404), E2E-03 (chemin invalide → 400), E2E-04 (SQL non-atomique → exception propagée + log orphan). `E2E_PUR02_RESULT=PASS`. Résultat total : **60/60 tests simulés + 4 scénarios E2E PASS**. Lab détruit post-tests. Production inchangée.
+- **L-1 confirmée empiriquement** par E2E-04 : `$transaction` SQL échoue après LanceDB ok → exception propagée + log `[removeDocuments] SQL cleanup failed … document_vectors rows … may be orphaned`.
+- **Suite A adaptée** : `pur02-candidate-v4f.test.js` SHA `773fbe04…` (scénarios 9/10 → `true`) est la suite canonique. L'ancienne `pur02-candidate.test.js` SHA `f3e88f13…` (scénarios 9/10 → `false`) est OBSOLÈTE.
+- **Non déployé — déploiement requiert autorisation explicite de Florian.**
 
 **Non testé :** exploitation effective de ces risques ; tous les tests de la matrice.
 
@@ -983,15 +988,56 @@ Corrections appliquées sur suggestion audit ChatGPT — deux séries : (1) chem
 
 SHA-256 `candidate-lance-index-v4f.js` (`8103f042…`) vérifié sur `correctif-PUR-02` par ChatGPT (08/11/2026). SHA-256 `pur02-lance-v4f.test.js` (`11d835b2…`) : version finale après 5 corrections, rapportée par la session Claude.
 
-**Statut v4f :** non déployé. Statut PUR-02-E (v4e + fix#1b) inchangé — candidat prêt pour essai isolé, non déployé.
+**Statut v4f :** non déployé. Ajout Suite L/R portant le total à 60/60 (voir ci-dessous).
+
+---
+
+#### E2E sur instance jetable (2026-11-10)
+
+**Environnement** : conteneur `pur02-e2e-runtime-20261110`, image dérivée de la production (`sha256:ddf73304…`), 40 migrations Prisma depuis zéro. Exécuté par ChatGPT sur minimac. Aucune modification de la production.
+
+**Résultat : `E2E_PUR02_RESULT=PASS`**
+
+| Scénario | Description | Résultat |
+|---|---|---|
+| E2E-01 | Purge nominale d'un document unique | ✅ PASS |
+| E2E-02 | Purge d'un dossier complet (fichiers multiples) | ✅ PASS |
+| E2E-03 | Rejet noms invalides / traversal / dossier protégé | ✅ PASS |
+| E2E-04 | Limite L-1 : SQL échoue après LanceDB ok → exception + log | ✅ PASS (comportement attendu) |
+
+Conteneur et image lab détruits et vérifiés absents. Production inchangée (`RestartCount=0`).
+
+**Suite A adaptée pour v4f (2026-11-10)** : `pur02-candidate-v4f.test.js` (SHA `773fbe04…`) — scénarios 9/10 retournent désormais `true` (au lieu de `false`). L'ancienne `pur02-candidate.test.js` (SHA `f3e88f13…`, scénarios 9/10 → `false`) est **obsolète**.
+
+**Total consolidé :** 22 Suite A v4f + 16 Suite B + 14 Suite C + 8 Suite L/R = **60/60 PASS**
+
+> **60 ≠ 52** : les 52 du 04/11 n'incluaient pas la Suite L/R et utilisaient la Suite A v4e (scénarios 9/10 → `false`).
+
+#### Candidats actifs PUR-02-E (SHAs vérifiés 2026-11-11)
+
+| Fichier | SHA-256 | Rôle |
+|---|---|---|
+| `candidate-purgeDocument-v4e.js` | `90a21b04…` | Purge — v4e + fix#1b |
+| `candidate-documents.js` | `de9c5860…` | Modèle Document |
+| `candidate-lance-index-v4f.js` | `8103f042…` | LanceDB v4f |
+| Patch `PUR-02-E-purgeDocument-v4e-fix1b.patch` | `86043b31…` | |
+
+Suites canoniques :
+
+| Suite | Fichier | SHA-256 |
+|---|---|---|
+| A (v4f) | `pur02-candidate-v4f.test.js` | `773fbe04…` |
+| B | `pur02-http-handler.test.js` | `cb9702bd…` |
+| C | `pur02-path-security.test.js` | `89e32abc…` |
+| L/R | `pur02-lance-v4f.test.js` | `11d835b2…` |
 
 ---
 
 #### Statut global
 
-**v4e + fix#1b :** VALIDÉ en laboratoire — non déployé. Essai isolé requis avant tout déploiement en production. Exporter les fichiers candidats du conteneur lab avant tout arrêt.
+**PUR-02-E (v4e + fix#1b + LanceDB v4f) :** VALIDÉ — 60/60 tests simulés + 4 scénarios E2E PASS. Lab détruit. Production inchangée. **Non déployé** — déploiement requiert autorisation explicite de Florian.
 
-**v4f (compagnon) :** VALIDÉ en tests unitaires — non déployé. Sans impact sur le déploiement de PUR-02-E.
+> `fix#1b` est un correctif de `candidate-purgeDocument-v4e.js` uniquement. Il ne concerne pas LanceDB v4f. Ces deux améliorations sont dans des fichiers distincts et indépendants.
 
 Voir `PUR-02-livraison.md` pour le détail complet de livraison.
 
@@ -1118,7 +1164,8 @@ Toutes ces commandes sont en lecture seule. Elles ne prouvent pas la provenance 
 
 *Auteur : Florian — élaboré avec Claude et ChatGPT*
 *Sources : notes de passation ChatGPT (9, 11, 12 oct 2026) + conversations Claude oct 2026 + audit AnythingLLM oct 2026 + dossiers ChatGPT 23 oct 2026 + Plan-correctifs v0.4 (24 oct 2026) + passation ChatGPT du 25 oct 2026 + conclusions validées du 25 oct 2026 (21:37) + relecture du code amont par Claude le 25 oct 2026 (tag v1.17.0 et commit a5bb8b9)*
-*Version 0.9 — 8 novembre 2026*
+*Version 1.0 — 11 novembre 2026*
+*Changements v1.0 : intégration résultats E2E PUR-02-E (ChatGPT, 2026-11-10) — 4/4 scénarios E2E PASS (`E2E_PUR02_RESULT=PASS`) sur instance jetable `pur02-e2e-runtime-20261110` ; 60/60 tests total (52 simulés + 8 LanceDB v4f) ; candidat actif : 3 composants (`candidate-purgeDocument-v4e.js` SHA `90a21b04…`, `candidate-documents.js` SHA `de9c5860…`, `candidate-lance-index-v4f.js` SHA `8103f042…`) ; suite canonique A v4f `pur02-candidate-v4f.test.js` SHA `773fbe04…` (scénarios 9/10 → `true`) ; ancienne suite A `pur02-candidate.test.js` SHA `f3e88f13…` OBSOLÈTE ; L-1 confirmée empiriquement par E2E-04 ; fix#1b ≠ LanceDB v4f (distincts et indépendants) ; section 14.12 (statut PUR-02-E final), 14.13 (PUR-02 → 60/60 + 4 E2E), 14.15 (mise à jour 2026-11-10/11), 14.22 (E2E, candidats actifs, suites canoniques, statut global VALIDÉ) mis à jour. Lab détruit. Production inchangée. **Non déployé.** Base : v0.9 (8 nov 2026).*
 *Changements v0.9 : mise à jour PUR-02 v4e + fix#1b (52/52 tests PASS, 22A+16B+14C, patch SHA `86043b31…`, contre-revue indépendante) manquant depuis v0.8 ; ajout compagnon LanceDB v4f (`candidate-lance-index-v4f.js`, SHA `8103f042…`, 8/8 PASS [LAB], L-01..L-05 + R-01..R-03) ; 5 corrections test v4f (UUID déterministes, spy R-02 conservant l'exécution réelle, vérification même docId) ; test SHA final `11d835b2…` ; section 14.12 (statut v4e+fix#1b + v4f), 14.13 (matrice PUR-01, PUR-02), 14.15 (mises à jour 2026-11-05 et 2026-11-08), 14.22 (v4e+fix#1b, v4f) mis à jour. PUR-02-E non déployé — essai isolé requis. Base : v0.8 (1er nov 2026).*
 *Changements v0.8 : intégration de la validation PUR-02 v4 (9/9 tests d'intégration + 17/17 unitaires, consolidation v3 22/22) ; nouvelle section 14.22 (PUR-02 v4) ; section 7.4 mise à jour ; section 14.12 mise à jour (statut ALLM-16) ; matrice 14.13 mise à jour (PUR-01, PUR-02) ; section 14.15 mise à jour (milestone 2026-11-01). Non déployé — essai isolé requis. Base : v0.7 (28 oct 2026).*
 *Changements v0.7 : intégration du bilan ChatGPT du 28/10/2026 (étiquettes [PROD] et [LAB] ; ALLM-10 activé en production le 27/10, test unitaire seulement ; configuration `compose.yaml` ; états partiels dans la matrice ; correctifs de laboratoire INT-18 et INT-20/PUR-02 non validés ni déployés ; nouvelle section 14.21 ; items 6, 25, 29, 30 de la section 13 ; 15.4 mis à jour). Base : v0.6 (25 oct 2026).*

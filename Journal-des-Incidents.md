@@ -103,15 +103,59 @@ Scénarios d'intégration validés : S01 purge simple, S02 multi-documents, S03 
 
 LanceDB est nettoyé *avant* que `$transaction` échoue → état transitoire partiel possible (rangées SQL préservées, vecteurs LanceDB déjà supprimés). Documenté, non résolu dans v4 — révision architecturale séparée requise.
 
-#### Statut après validation
+#### Statut après validation (01/11/2026)
 
-- **ALLM-16** : ✅ Corrigé par PUR-02 v4e + fix#1b (correctif candidat, non déployé — essai isolé requis)
+- **ALLM-16** : candidat PUR-02 v4e + fix#1b en cours de validation
 - Patch SHA-256 : `86043b316bb40bbee3a9cc706d756255bbded05e278e3033ee018f14b1dbd8aa`
-- Fichiers candidats : `candidate-purgeDocument.js` (`15fc2ee1…`), `candidate-documents.js` (`de9c5860…`), `candidate-lance-index.js` (`c826f004…`)
+- Fichiers candidats à la date du 01/11 : `candidate-purgeDocument.js` (`15fc2ee1…`, v4 pré-fix#1b, désormais supersédé), `candidate-documents.js` (`de9c5860…`), `candidate-lance-index.js` (`c826f004…`, v4, désormais supersédé par v4f)
+
+> **Correction de l'historique** : la ligne ci-dessus conserve les SHA de la session du 01/11 à des fins d'historique. Les candidats actuellement actifs sont différents — voir §4.
 
 #### Décisions issues du 01/11/2026
 
 - **D6 mise à jour** : PUR-02 passe de « corrigé en laboratoire seulement, non validé » à « candidat v4e + fix#1b validé par 52/52 tests (22 Suite A + 16 Suite B + 14 Suite C) — non déployé — essai isolé requis ».
+- Toutes les autres décisions (D1–D5, D7) inchangées.
+
+### Mise à jour du 10/11/2026 — PUR-02-E : E2E sur instance jetable + LanceDB v4f
+
+**Source : ChatGPT sur machine Florian (minimac), 2026-11-10. Conteneur lab jetable : `pur02-e2e-runtime-20261110`, image dérivée de la production. Aucune modification de la production.**
+
+#### Candidats actifs (PUR-02-E)
+
+Trois composants — SHAs vérifiés localement le 2026-11-11 :
+
+| Fichier | SHA-256 | Rôle |
+|---|---|---|
+| `candidate-purgeDocument-v4e.js` | `90a21b04…` | Purge — v4e + fix#1b |
+| `candidate-documents.js` | `de9c5860…` | Modèle Document |
+| `candidate-lance-index-v4f.js` | `8103f042…` | LanceDB — no-ops → `true` (v4f) |
+
+> **fix#1b** concerne exclusivement `candidate-purgeDocument-v4e.js` (validation pré-normalisation `FOLDER_NAME_INVALID`). Il ne concerne **pas** LanceDB v4f. Ces deux améliorations sont dans des fichiers distincts.
+
+#### Résultats E2E
+
+- **4 / 4 scénarios E2E PASS** (`E2E_PUR02_RESULT=PASS`) :
+  - E2E-01 : purge nominale d'un document unique ✅
+  - E2E-02 : purge d'un dossier complet (fichiers multiples) ✅
+  - E2E-03 : rejet des noms invalides / traversal / dossier protégé ✅
+  - E2E-04 : démonstration limite L-1 (SQL échoue après LanceDB ok) ✅ — comportement attendu confirmé
+- **60 / 60 tests simulés PASS** (22 Suite A v4f + 16 Suite B + 14 Suite C + 8 Suite L/R)
+- **Conteneur lab détruit et vérifié absent** ; production inchangée (`RestartCount=0`)
+
+> **60 ≠ 52** : les 52 du 04/11 n'incluaient pas la Suite L/R (8 tests LanceDB v4f) et utilisaient la Suite A v4e (scénarios 9/10 → `false`). Les 60 incluent la Suite L/R et la Suite A adaptée v4f (scénarios 9/10 → `true`).
+
+#### Limite L-1 (confirmée empiriquement par E2E-04)
+
+E2E-04 a reproduit sur instance réelle (SQLite + LanceDB réels, 40 migrations Prisma) le scénario : `$transaction` échoue après LanceDB ok → exception propagée + log `[removeDocuments] SQL cleanup failed … document_vectors rows … may be orphaned`. Comportement documenté respecté. Limite non résolue, remédiation manuelle inchangée.
+
+#### Statut après E2E
+
+- **ALLM-16** : ✅ Corrigé par PUR-02-E — `candidate-purgeDocument-v4e.js` (`90a21b04…`) + `candidate-documents.js` (`de9c5860…`) + `candidate-lance-index-v4f.js` (`8103f042…`) — intégrité vérifiée, **60/60 tests simulés + 4 scénarios E2E PASS** — **non déployé en production**
+- Patch : `PUR-02-E-purgeDocument-v4e-fix1b.patch` (`86043b31…`)
+
+#### Décisions issues du 10/11/2026
+
+- **D6 mise à jour** : PUR-02-E passe de « 52/52 tests, essai isolé requis » à « 60/60 tests simulés + 4 scénarios E2E PASS, lab détruit, production inchangée — **non déployé** — déploiement explicitement autorisé par Florian requis ».
 - Toutes les autres décisions (D1–D5, D7) inchangées.
 
 ---
