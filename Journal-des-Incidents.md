@@ -134,19 +134,27 @@ Trois composants — SHAs vérifiés localement le 2026-11-11 :
 
 #### Résultats E2E
 
-- **4 / 4 scénarios E2E PASS** (`E2E_PUR02_RESULT=PASS`) :
-  - E2E-01 : purge nominale d'un document unique ✅
-  - E2E-02 : purge d'un dossier complet (fichiers multiples) ✅
-  - E2E-03 : rejet des noms invalides / traversal / dossier protégé ✅
-  - E2E-04 : démonstration limite L-1 (SQL échoue après LanceDB ok) ✅ — comportement attendu confirmé
-- **60 / 60 tests simulés PASS** (22 Suite A v4f + 16 Suite B + 14 Suite C + 8 Suite L/R)
-- **Conteneur lab détruit et vérifié absent** ; production inchangée (`RestartCount=0`)
+> Ces quatre scénarios sont des **tests d'intégration du traitement de purge** dans un laboratoire isolé (SQLite/Prisma + LanceDB réels). Ils ne constituent **pas** quatre tests HTTP authentifiés des routes de production.
+
+**4 / 4 scénarios E2E PASS** (`E2E_PUR02_RESULT=PASS`) :
+
+| Scénario | Description réelle | Résultat |
+|---|---|---|
+| E2E-01 | **Purge multi-workspace nominale** : document associé à deux workspaces, vecteurs dans les deux namespaces LanceDB → associations SQL et vecteurs supprimés, cache supprimé, dossier supprimé | ✅ PASS |
+| E2E-02 | **Namespace LanceDB absent** : association SQL présente, aucun namespace LanceDB → no-op reconnu, nettoyage SQL effectué, cache supprimé, dossier supprimé | ✅ PASS |
+| E2E-03 | **Namespace LanceDB existant mais vide** : namespace présent, 0 vecteur SQL correspondant → namespace vide reconnu, nettoyage SQL effectué, cache supprimé, dossier supprimé | ✅ PASS |
+| E2E-04 | **Échec SQL par trigger, puis reprise** : *1re tentative* — trigger SQLite provoque l'échec de `workspace_documents` après suppression LanceDB réussie → `$transaction` échoue (`Foreign key constraint failed on the field: foreign key`), exception propagée, références SQL et dossier conservés. *2e tentative* (trigger supprimé) → PASS | ✅ PASS |
+
+- **60 / 60 tests simulés PASS** (22 Suite A v4f + 16 Suite B + 14 Suite C + 8 Suite L/R) — environnement : Node.js 18.20.8, Jest 29.7.0, conteneur éphémère basé sur le digest de production
+- **Conteneur `pur02-e2e-runtime-20261110` supprimé et vérifié absent** ; **image dérivée `pur02-e2e:20261110` supprimée et vérifiée absente** ; production inchangée (`RestartCount=0`)
 
 > **60 ≠ 52** : les 52 du 04/11 n'incluaient pas la Suite L/R (8 tests LanceDB v4f) et utilisaient la Suite A v4e (scénarios 9/10 → `false`). Les 60 incluent la Suite L/R et la Suite A adaptée v4f (scénarios 9/10 → `true`).
 
+> **Limite de traçabilité** : aucun journal Jest persistant du run 60/60 n'a été retrouvé. Les résultats 60/60 sont rapportés et constatés pendant la session ; les empreintes ont été vérifiées séparément.
+
 #### Limite L-1 (confirmée empiriquement par E2E-04)
 
-E2E-04 a reproduit sur instance réelle (SQLite + LanceDB réels, 40 migrations Prisma) le scénario : `$transaction` échoue après LanceDB ok → exception propagée + log `[removeDocuments] SQL cleanup failed … document_vectors rows … may be orphaned`. Comportement documenté respecté. Limite non résolue, remédiation manuelle inchangée.
+E2E-04 a reproduit sur instance réelle (SQLite + LanceDB réels, 40 migrations Prisma) le scénario : trigger SQLite provoque l'échec de `$transaction` après suppression LanceDB réussie → exception propagée (`Foreign key constraint failed on the field: foreign key`) + références SQL et dossier physique conservés. La reprise par nouvelle tentative (après suppression du trigger) confirme que l'état est récupérable. Limite non résolue, remédiation manuelle inchangée.
 
 #### Statut après E2E
 

@@ -171,41 +171,44 @@ Tests: 8 passed, 8 total
 
 ## 4. Tests E2E — instance jetable (2026-11-10)
 
-**Environnement** :
-- Conteneur lab : `pur02-e2e-runtime-20261110`
-- Image lab : `pur02-e2e:20261110` (dérivée de l'image de production `sha256:ddf73304a4a96e2f90755d620dd3921de9afb4b8b8e914fa62d6ce7944ba95af`)
-- 40 migrations Prisma appliquées depuis zéro (`npx prisma migrate deploy`)
+**Environnement du laboratoire E2E** :
+- Image de base : image de production (`sha256:ddf73304a4a96e2f90755d620dd3921de9afb4b8b8e914fa62d6ce7944ba95af`)
+- Image dérivée temporaire : `pur02-e2e:20261110`
+- Conteneur temporaire : `pur02-e2e-runtime-20261110`
+- SQLite : base créée de zéro dans un système de fichiers temporaire ; 40 migrations Prisma appliquées (`npx prisma migrate deploy` → `Database schema is up to date!`)
+- LanceDB : instance réelle, initialisée dans le stockage temporaire
+- Variables : `STORAGE_DIR=/app/server/storage`, `NODE_ENV=production`, `VECTOR_DB=lancedb`
+- Réseau Docker : `none` (aucun accès réseau externe pendant l'exécution)
+- Système de fichiers du conteneur : lecture seule, hors tmpfs explicitement prévus (`/app/server/storage`, `/app/collector/hotdir`, `/tmp`)
+- Aucun volume de production monté ; aucun montage NAS ; aucun document réel
 - Exécuté par ChatGPT sur la machine de Florian le 2026-11-10
 
 **Résultat global : `E2E_PUR02_RESULT=PASS`**
 
+> Ces quatre scénarios sont des **tests d'intégration du traitement de purge** dans un laboratoire isolé (SQLite/Prisma + LanceDB réels). Ils ne constituent **pas** quatre tests HTTP authentifiés des routes de production.
+
 | Scénario | Description | Résultat |
 |---|---|---|
-| E2E-01 | Purge nominale d'un document unique dans un namespace existant | ✅ PASS |
-| E2E-02 | Purge d'un dossier complet (fichiers multiples) | ✅ PASS |
-| E2E-03 | Rejet des noms invalides / traversal / dossier protégé | ✅ PASS |
-| E2E-04 | Démonstration de la limite L-1 : SQL `$transaction` échoue après LanceDB ok → `document_vectors` rows présents, vecteurs supprimés | ✅ PASS (comportement attendu confirmé) |
+| E2E-01 | **Purge multi-workspace nominale** : document associé à deux workspaces, vecteurs dans les deux namespaces LanceDB → associations SQL et vecteurs des deux workspaces supprimés, cache supprimé, dossier supprimé | ✅ PASS |
+| E2E-02 | **Namespace LanceDB absent** : association document/workspace présente, aucun namespace LanceDB correspondant, aucun vecteur → no-op namespace reconnu, nettoyage SQL effectué, cache supprimé, dossier supprimé | ✅ PASS |
+| E2E-03 | **Namespace LanceDB existant mais vide** : namespace existe, vecteur factice préalablement supprimé, aucun enregistrement SQL de vecteur → namespace vide reconnu, 0 vecteur à supprimer, nettoyage SQL effectué, cache supprimé, dossier supprimé | ✅ PASS |
+| E2E-04 | **Échec SQL après suppression LanceDB, puis reprise** — *1re tentative* : trigger SQLite provoque l'échec de `workspace_documents` → LanceDB ok, `$transaction` échoue (`Foreign key constraint failed on the field: foreign key`), exception propagée, références SQL et dossier conservés. *2e tentative* (après suppression du trigger) : PASS | ✅ PASS |
+
+> **E2E-04** confirme empiriquement la limite L-1 (§5, L-1). La première tentative devait échouer ; c'est le comportement attendu. L'exception est propagée et les références SQL + dossier sont conservés, permettant une reprise. La non-atomicité entre SQLite et LanceDB reste une limite résiduelle documentée non résolue.
 
 **Vérifications post-tests** :
-- Conteneur lab `pur02-e2e-runtime-20261110` : supprimé et vérifié absent ✅
-- Image lab `pur02-e2e:20261110` : supprimée et vérifiée absente ✅
+- Conteneur `pur02-e2e-runtime-20261110` : **supprimé** et vérifié absent ✅
+- Image dérivée `pur02-e2e:20261110` : **supprimée** et vérifiée absente ✅
 - Conteneur de production `anythingllm` : `running`, `RestartCount=0`, inchangé ✅
 - Image de production `sha256:ddf73304…` : inchangée ✅
 
-> **E2E-04** confirme empiriquement la limite L-1 (§5, L-1). Ce n'est pas un échec — le comportement correct après `$transaction` failure est l'exception propagée et le log `[removeDocuments] SQL cleanup failed … document_vectors rows … may be orphaned`. La détection fonctionne. La non-atomicité entre SQLite et LanceDB reste une limite résiduelle documentée.
+**Environnement du run de tests simulés 60/60 (2026-11-10)** :
+- Node.js 18.20.8 ; Jest 29.7.0 (installé dans `/tmp`)
+- Conteneur éphémère basé sur le digest exact de l'image de production, `--network bridge` pour le téléchargement initial de Jest
+- Tests exécutés sur les suites et fichiers du volume de travail monté en lecture seule
+- Conteneur éphémère supprimé automatiquement après le run
 
-**Commandes de reproduction (simulé, 2026-11-04/05)** :
-```bash
-# Node.js v22.22.0 / Jest 30.5.2
-# Dans scratchpad/test-run-v4e/
-npx jest --no-coverage  # → 60 passed, 4 suites (avec pur02-lance-v4f.test.js)
-
-# Suites individuelles
-npx jest --no-coverage pur02-candidate-v4f   # Suite A — 22 PASS
-npx jest --no-coverage pur02-http-handler    # Suite B — 16 PASS
-npx jest --no-coverage pur02-path-security   # Suite C — 14 PASS
-npx jest --no-coverage pur02-lance-v4f       # Suite L/R — 8 PASS
-```
+> **Limite de traçabilité** : aucun journal Jest persistant du run 60/60 n'a été retrouvé permettant de démontrer rétrospectivement la correspondance exacte entre chaque fichier, son empreinte SHA-256 et ce run. Les résultats 60/60 sont rapportés et constatés pendant la session. Les empreintes des fichiers ont été vérifiées séparément. Le run simulé et le laboratoire E2E sont deux environnements distincts.
 
 ---
 

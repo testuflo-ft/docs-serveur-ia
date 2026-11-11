@@ -618,7 +618,7 @@ Voir section 14.22 et fichier `PUR-02-livraison.md`.
 
 ### 14.13 Plan de test consolidé — avant d'activer n8n
 
-**Aucun test n'est déclaré validé** (32 identifiants ; des résultats partiels de laboratoire [LAB] et un test unitaire de production [PROD] sont rapportés dans la colonne « Exécuté ? » ; l'état réel du laboratoire n'est pas connu de cette version). Tests uniquement en laboratoire isolé avec données factices, **après vérification que le conteneur de laboratoire est démarré**. Ne pas se limiter au code HTTP ou à `success: true` : vérifier pour chaque test touchant des documents — système de fichiers, associations SQL, enregistrements `DocumentVectors`, vecteurs LanceDB, cache vectoriel, résultat HTTP et logs expurgés de secrets. SEC-02 à SEC-05 ne concernent que l'évaluation éventuelle de CP-3 ; RAG-03 est scindé en RAG-03A/B (ALLM-06) ; SEC-10 est nouveau.
+**Les tests de cette matrice générale (SEC-*, RAG-*, OPS-*, INT-*, UPLOAD-*, RACE-*) ne sont pas déclarés validés** (32 identifiants ; des résultats partiels de laboratoire [LAB] et un test unitaire de production [PROD] sont rapportés dans la colonne « Exécuté ? » ; l'état réel du laboratoire n'est pas connu de cette version). **Exception : PUR-01 et PUR-02** font l'objet de validations spécifiques rapportées dans leurs colonnes respectives et détaillées dans §14.22 et `PUR-02-livraison.md`. Ces validations PUR-02 (60/60 tests simulés + 4 scénarios E2E) sont distinctes des tests généraux non exécutés — elles ne valident pas les autres lignes de la matrice. Tests uniquement en laboratoire isolé avec données factices, **après vérification que le conteneur de laboratoire est démarré**. Ne pas se limiter au code HTTP ou à `success: true` : vérifier pour chaque test touchant des documents — système de fichiers, associations SQL, enregistrements `DocumentVectors`, vecteurs LanceDB, cache vectoriel, résultat HTTP et logs expurgés de secrets. SEC-02 à SEC-05 ne concernent que l'évaluation éventuelle de CP-3 ; RAG-03 est scindé en RAG-03A/B (ALLM-06) ; SEC-10 est nouveau.
 
 | ID | Catégorie | Scénario | Résultat attendu / preuve | Exécuté ? |
 |---|---|---|---|---|
@@ -705,7 +705,7 @@ Voir section 14.22 et fichier `PUR-02-livraison.md`.
 - **Compagnon LanceDB v4f** : `candidate-lance-index-v4f.js` — `deleteDocumentFromNamespace()` retourne `true` pour les no-ops ; 8/8 PASS (L-01..L-05 + R-01..R-03) ; corrections audit ChatGPT (chemin portable, R-02 vrai test d'intégration) ; SHA `8103f042…`. Sans impact sur PUR-02-E (non déployé). Voir section 14.22.
 
 **Mise à jour 2026-11-10/11 :**
-- **PUR-02-E VALIDÉ E2E** : 4 scénarios E2E PASS sur instance réelle jetable (`pur02-e2e-runtime-20261110`, image dérivée de production `sha256:ddf73304…`, 40 migrations Prisma) : E2E-01 (purge dossier valide), E2E-02 (dossier absent → 404), E2E-03 (chemin invalide → 400), E2E-04 (SQL non-atomique → exception propagée + log orphan). `E2E_PUR02_RESULT=PASS`. Résultat total : **60/60 tests simulés + 4 scénarios E2E PASS**. Lab détruit post-tests. Production inchangée.
+- **PUR-02-E VALIDÉ E2E** : 4 scénarios E2E PASS sur instance réelle jetable (`pur02-e2e-runtime-20261110`, image dérivée `pur02-e2e:20261110` basée sur `sha256:ddf73304…`, SQLite de zéro, 40 migrations Prisma, LanceDB réel, `NODE_ENV=production`, réseau Docker `none`). Scénarios réels : E2E-01 (purge multi-workspace, 2 workspaces, 2 namespaces LanceDB), E2E-02 (namespace LanceDB absent, no-op), E2E-03 (namespace LanceDB existant mais vide), E2E-04 (échec SQL par trigger + reprise après suppression du trigger). Ces scénarios sont des **tests d'intégration du traitement de purge**, pas des tests HTTP authentifiés. `E2E_PUR02_RESULT=PASS`. Résultat total : **60/60 tests simulés + 4 scénarios E2E PASS**. Conteneur et image dérivée supprimés et vérifiés absents post-tests. Production inchangée.
 - **L-1 confirmée empiriquement** par E2E-04 : `$transaction` SQL échoue après LanceDB ok → exception propagée + log `[removeDocuments] SQL cleanup failed … document_vectors rows … may be orphaned`.
 - **Suite A adaptée** : `pur02-candidate-v4f.test.js` SHA `773fbe04…` (scénarios 9/10 → `true`) est la suite canonique. L'ancienne `pur02-candidate.test.js` SHA `f3e88f13…` (scénarios 9/10 → `false`) est OBSOLÈTE.
 - **Non déployé — déploiement requiert autorisation explicite de Florian.**
@@ -998,14 +998,16 @@ SHA-256 `candidate-lance-index-v4f.js` (`8103f042…`) vérifié sur `correctif-
 
 **Résultat : `E2E_PUR02_RESULT=PASS`**
 
-| Scénario | Description | Résultat |
-|---|---|---|
-| E2E-01 | Purge nominale d'un document unique | ✅ PASS |
-| E2E-02 | Purge d'un dossier complet (fichiers multiples) | ✅ PASS |
-| E2E-03 | Rejet noms invalides / traversal / dossier protégé | ✅ PASS |
-| E2E-04 | Limite L-1 : SQL échoue après LanceDB ok → exception + log | ✅ PASS (comportement attendu) |
+> Ces quatre scénarios sont des **tests d'intégration du traitement de purge** dans un laboratoire isolé. Ils ne constituent **pas** quatre tests HTTP authentifiés des routes de production.
 
-Conteneur et image lab détruits et vérifiés absents. Production inchangée (`RestartCount=0`).
+| Scénario | Description réelle | Résultat |
+|---|---|---|
+| E2E-01 | **Purge multi-workspace nominale** : document associé à deux workspaces, vecteurs dans les deux namespaces LanceDB | ✅ PASS |
+| E2E-02 | **Namespace LanceDB absent** : no-op reconnu, nettoyage SQL effectué | ✅ PASS |
+| E2E-03 | **Namespace LanceDB existant mais vide** : 0 vecteur, nettoyage SQL effectué | ✅ PASS |
+| E2E-04 | **Échec SQL par trigger + reprise** : 1re tentative → LanceDB ok, `$transaction` échoue (`Foreign key constraint failed`), conservé ; 2e tentative → PASS | ✅ PASS (comportement attendu) |
+
+Conteneur `pur02-e2e-runtime-20261110` **supprimé** et vérifié absent. Image dérivée `pur02-e2e:20261110` **supprimée** et vérifiée absente. Production inchangée (`RestartCount=0`).
 
 **Suite A adaptée pour v4f (2026-11-10)** : `pur02-candidate-v4f.test.js` (SHA `773fbe04…`) — scénarios 9/10 retournent désormais `true` (au lieu de `false`). L'ancienne `pur02-candidate.test.js` (SHA `f3e88f13…`, scénarios 9/10 → `false`) est **obsolète**.
 

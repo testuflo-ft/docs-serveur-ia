@@ -2,7 +2,7 @@
 
 **Date** : 2026-11-11  
 **Répertoire de référence** : `docs-serveur-ia/`  
-**Statut** : INVENTAIRE POST-E2E — en attente d'autorisation pour publication GitHub et nettoyage
+**Statut** : INVENTAIRE POST-E2E — publication initiale effectuée sur `main` (commit `11f188a1…`, 2026-11-11) — toute correction ou nettoyage requiert autorisation Florian
 
 ---
 
@@ -52,7 +52,11 @@ Les trois fichiers à déployer ensemble pour appliquer PUR-02-E.
 |---|---|---|
 | `pur02-candidate-v4f.test.js` | `773fbe04198bc45d5bc8daea435101fc9cb5461c223d319ce27afdd99a77e06e` | ✅ Canonique — scénarios 9/10 → `true` |
 
-> **Note** : `pur02-candidate-v4f.test.js` a été utilisée dans l'environnement E2E (ChatGPT, 2026-11-10). Elle n'est pas présente dans ce répertoire local. Son SHA-256 est fourni par ChatGPT à partir du rapport E2E et n'a pas été vérifié localement.
+> **Note** : `pur02-candidate-v4f.test.js` a été utilisée pour les tests simulés 60/60 (pas dans le laboratoire E2E lui-même, qui était distinct). Elle n'est pas présente dans le répertoire local ni sur aucune branche GitHub vérifiée. Son SHA-256 est fourni par ChatGPT à partir du rapport de session du 2026-11-10 et n'a pas été vérifié localement (lab détruit).
+
+> **Limite de traçabilité** : aucun journal Jest persistant du run 60/60 n'a été retrouvé permettant de démontrer rétrospectivement la correspondance exacte entre chaque fichier, son empreinte SHA-256 et ce run. Ne pas présenter les SHA des suites comme une preuve certifiée du run.
+
+> **Distinction SHA-256 fichier / Git blob SHA** : les SHA-256 listés dans cet inventaire sont des empreintes de contenu de fichier (`sha256sum`), **pas** des Git blob SHA. Ces deux empreintes sont différentes pour le même fichier.
 
 ---
 
@@ -102,6 +106,50 @@ Rapports de validation et d'audit produits pendant le développement de PUR-02.
 | `pur02-candidate.test.js` | OBSOLÈTE (Suite A pré-v4f) | **Supprimer ou archiver ?** Archivage recommandé pour traçabilité historique. |
 | `candidate-lance-index.js` | SUPERSÉDÉ (v4 → v4f) | **Supprimer ou archiver ?** Archivage recommandé. |
 | `pur02-candidate-v4f.test.js` | Absente localement — présente uniquement dans l'env E2E (ChatGPT) | **Rapatrier ?** Utile si un re-test est nécessaire. SHA fourni par rapport E2E, non vérifié localement. |
+
+---
+
+## 8. Inventaire par branche GitHub (état vérifié lors de la session)
+
+> **Méthode** : clone local effectué pendant la session à partir du dépôt `testuflo-ft/docs-serveur-ia`. État des branches au moment du clone (avant l'upload Florian du 2026-11-11).
+
+### Branche `main`
+
+| Fichier | Présent | Remarque |
+|---|---|---|
+| `candidate-purgeDocument-v4e.js` | ✅ | Candidat actif v4e + fix#1b |
+| `candidate-documents.js` | ❌ | Absent de `main` — présent sur `correctif-PUR-02` uniquement |
+| `candidate-lance-index-v4f.js` | ❌ | Absent de `main` — présent sur `correctif-PUR-02` uniquement |
+| `pur02-candidate.test.js` | ✅ | Suite A OBSOLÈTE (scénarios 9/10 → `false`) |
+| `pur02-http-handler.test.js` | ✅ | Suite B canonique |
+| `pur02-path-security.test.js` | ✅ | Suite C canonique |
+| `pur02-lance-v4f.test.js` | ✅ | Suite L/R canonique |
+| `pur02-candidate-v4f.test.js` | ❌ | **Absente de toutes les branches GitHub** — utilisée uniquement dans l'env local/scratchpad lors des tests 60/60 |
+| `pur02-sources-1.19.0/` | ✅ | Dossier sources v1.19.0 complet |
+| `PUR-02-E-purgeDocument-v4e-fix1b.patch` | ✅ | Patch fix#1b |
+| Rapports et documents `docs-serveur-ia/` | ✅ | Présents sur `main` |
+
+### Branche `correctif-PUR-02`
+
+| Fichier | Présent | Remarque |
+|---|---|---|
+| `candidate-documents.js` | ✅ | Candidat actif v4 |
+| `candidate-lance-index-v4f.js` | ✅ | Candidat actif v4f |
+| `candidate-lance-index.js` | ✅ | Ancienne version v4 — SUPERSÉDÉE |
+| `candidate-purgeDocument.js` | ✅ | Ancienne version v4 pré-fix#1b — SUPERSÉDÉE |
+| `candidate-purgeDocument-v4e.js` | ❌ | Absent de `correctif-PUR-02` — présent sur `main` uniquement |
+
+### Synthèse : répartition des 3 candidats actifs
+
+| Candidat | `main` | `correctif-PUR-02` |
+|---|---|---|
+| `candidate-purgeDocument-v4e.js` | ✅ | ❌ |
+| `candidate-documents.js` | ❌ | ✅ |
+| `candidate-lance-index-v4f.js` | ❌ | ✅ |
+
+> **Conséquence** : pour déployer PUR-02-E, il faudra récupérer les 3 candidats depuis deux branches différentes. Aucune des deux branches ne contient les 3 composants réunis.
+
+> **`pur02-candidate-v4f.test.js`** : absente de toutes les branches GitHub vérifiées. Elle n'était présente que dans l'environnement scratchpad/tests/ local pendant les tests simulés du 2026-11-10. Son SHA-256 déclaré (`773fbe04…`) n'est pas vérifiable via GitHub.
 
 ---
 
