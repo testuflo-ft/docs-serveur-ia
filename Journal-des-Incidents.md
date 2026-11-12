@@ -57,7 +57,10 @@ Les numéros de ligne sont donnés pour la référence indiquée ([C17] ou [CM])
 #### Ce qui n'est PAS établi (limites de preuve)
 
 - ALLM-10 : le test HTTP authentifié de **chaque** route (`DELETE /workspace/:slug`, `DELETE /v1/workspace/:slug`, `DELETE /admin/workspaces/:id`) n'a pas été fait ; OPS-02 reste à exécuter en laboratoire. Le test unitaire du middleware ne remplace pas un test HTTP.
-- INT-18 et INT-20/PUR-02 : **ni validés, ni déployés**. Tests par mocks, sans test HTTP de bout en bout, sans vraie panne LanceDB/SQL, sans contrôle de l'état SQL/`DocumentVectors`/LanceDB/cache. Le déplacement n'est pas atomique : une erreur d'E/S réelle pendant la phase de déplacement peut laisser un état partiel. Certaines erreurs SQL de nettoyage peuvent être absorbées par le code existant. INT-18C (concurrence), INT-17, INT-19B (élément invalide au milieu d'un lot), sources répétées et conflits internes d'INT-19C ne sont pas couverts par le bilan. L'image de base du laboratoire n'est pas précisée : à comparer à l'ID de production avant de tirer une conclusion.
+- INT-18 et INT-20/PUR-02 : **ni validés, ni déployés** *(état au 28/10/2026)*. Tests par mocks, sans test HTTP de bout en bout, sans vraie panne LanceDB/SQL, sans contrôle de l'état SQL/`DocumentVectors`/LanceDB/cache. Le déplacement n'est pas atomique : une erreur d'E/S réelle pendant la phase de déplacement peut laisser un état partiel. Certaines erreurs SQL de nettoyage peuvent être absorbées par le code existant. INT-18C (concurrence), INT-17, INT-19B (élément invalide au milieu d'un lot), sources répétées et conflits internes d'INT-19C ne sont pas couverts par le bilan. L'image de base du laboratoire n'est pas précisée : à comparer à l'ID de production avant de tirer une conclusion.
+
+  > **Mise à jour PUR-02 (10/11/2026) :** le constat ci-dessus est l'état historique du 28/10. Pour PUR-02, il est dépassé : 60/60 tests simulés PASS + 4/4 scénarios E2E PASS sur instance jetable (`pur02-e2e-runtime-20261110`) avec SQLite/Prisma et LanceDB réels. Laboratoire détruit après les tests. Production inchangée. **Correctif non déployé.** INT-18 reste non validé dans son ensemble ; cette mise à jour ne s'étend pas à INT-18.
+
 - Le code des correctifs de laboratoire n'a pas été relu par Claude ; il n'est pas dans le dépôt documentaire.
 
 #### Hypothèses
@@ -490,7 +493,7 @@ Option A : passerelle dédiée. La clé Developer API générale ne sera pas tra
 ## ALLM-05 — La fonction purgeDocument a une portée globale
 
 **Date :** 12-13 octobre 2026 ; revu le 25 octobre 2026  
-**Statut :** ⚠️ Portée destructive globale confirmée dans le code ; pas de vulnérabilité autonome démontrée ; aucun incident de suppression constaté. Fiabilité améliorée par PUR-02 v4e + fix#1b (atomicité, propagation d'erreurs, validation FOLDER_NAME_INVALID) — candidat prêt pour essai isolé, non déployé.
+**Statut :** ⚠️ Portée destructive globale confirmée dans le code ; pas de vulnérabilité autonome démontrée ; aucun incident de suppression constaté. Fiabilité améliorée par PUR-02 v4e + fix#1b (atomicité, propagation d'erreurs, validation FOLDER_NAME_INVALID) — *(état au 05/11/2026 : candidat prêt pour essai isolé, non déployé)* — **statut dépassé le 10/11/2026** : PUR-02-E validé, 60/60 tests simulés + 4/4 scénarios E2E PASS, lab détruit, production inchangée, **correctif non déployé** (voir Mise à jour du 10/11/2026).
 
 **Symptôme / risque :**
 Une future synchronisation NAS pourrait être tentée de supprimer les vecteurs d'un document lorsqu'un fichier source disparaît. Or, le helper `purgeDocument(filename)` n'est pas limité à un seul espace de travail.
