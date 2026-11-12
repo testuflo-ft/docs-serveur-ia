@@ -83,11 +83,15 @@ Les numéros de ligne sont donnés pour la référence indiquée ([C17] ou [CM])
 
 #### Vérifications restantes (lecture seule d'abord ; aucune ne modifie la production)
 
-1. Exporter les correctifs de laboratoire avant tout arrêt du laboratoire (`docker diff anythingllm-fixlab`, `docker cp` des quatre fichiers modifiés vers un dossier hôte, SHA-256 consignés).
-2. Vérifier que `anythingllm-fixlab` est démarré (`docker ps --filter name=anythingllm-fixlab`) et comparer son image à celle de la production (`docker inspect anythingllm-fixlab --format '{{.Config.Image}} {{.Image}}'`).
+1. *(Historique — 28/10/2026)* Exporter les correctifs depuis `anythingllm-fixlab` (`docker diff`, `docker cp` des quatre fichiers modifiés, SHA-256 consignés). — **PUR-02 : supersédé** — les trois candidats sont documentés avec SHA-256 sur les branches GitHub `main` et `correctif-PUR-02`. — **INT-18 : correctifs non exportés ni documentés à ce jour** — statut d'`anythingllm-fixlab` non vérifié par Claude (ChatGPT rapporte que le conteneur est arrêté ; si confirmé, les correctifs INT-18 sont à risque de perte).
+2. *(Historique — 28/10/2026)* Vérifier que `anythingllm-fixlab` est démarré et comparer son image à la production. — **PUR-02 : non pertinent** — candidats documentés séparément avec SHA-256. — **INT-18 : statut du conteneur non vérifié par Claude.**
 3. Confirmer que `WORKSPACE_DELETION_PROTECTION` figure dans `compose.yaml` et non dans `anythingllm.env` (`grep -c` sur le nom de la variable, sans afficher les autres lignes).
 4. OPS-02 en laboratoire (trois routes, valeur `true`, `1` puis `0`).
-5. Tests HTTP de bout en bout et contrôle SQL/`DocumentVectors`/LanceDB/cache pour INT-18, INT-20 et PUR-01/02 ; INT-18C et INT-19B/C complémentaires.
+5. Vérifications restantes par correctif (état au 10/11/2026) :
+   - **PUR-02** : 60/60 tests simulés + 4/4 scénarios E2E d'intégration PASS, contrôle SQLite/Prisma et LanceDB réels réalisé dans le laboratoire jetable. Les tests HTTP authentifiés des routes de production ne sont **pas** couverts par ces E2E et restent à effectuer séparément si nécessaire. **Non déployé.**
+   - **INT-18** : reste non validé dans son ensemble ; INT-18C (concurrence), INT-17, INT-19B (élément invalide au milieu d'un lot), sources répétées et conflits internes d'INT-19C et tests HTTP de bout en bout demeurent à effectuer.
+   - **OPS-02** : les trois tests HTTP authentifiés de protection de suppression des workspaces restent à effectuer en laboratoire.
+   - **ALLM-12** : son état et ses vérifications restent indépendants de PUR-02.
 6. ALLM-12 : protocole de lecture seule puis laboratoire décrit dans le Plan v0.6, §2.7.
 
 ### Mise à jour du 01/11/2026 — PUR-02 v4 validé en laboratoire
