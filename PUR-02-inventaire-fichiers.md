@@ -46,7 +46,7 @@ Les trois fichiers à déployer ensemble pour appliquer PUR-02-E.
 | `pur02-path-security.test.js` | Suite C — sécurité chemins (fonctions reproductibles) | `89e32abc8c171b0aa7ad14cc90d49b614534e249c3e64f85d2fbabc6712d7921` | ✅ Canonique |
 | `pur02-lance-v4f.test.js` | Suite L/R — LanceDB v4f | `11d835b2eb1ed91b97ac6c9be6f9fae7bb5c585fbe0dd70ae7e306c65917a465` | ✅ Canonique |
 
-**Suite canonique A (non présente localement — résultat E2E uniquement) :**
+**Suite canonique A (présente dans le scratchpad local — utilisée pour les tests simulés 60/60 — absente des branches GitHub) :**
 
 | Fichier | SHA-256 | Statut |
 |---|---|---|
@@ -111,7 +111,7 @@ Rapports de validation et d'audit produits pendant le développement de PUR-02.
 
 ## 8. Inventaire par branche GitHub (état vérifié lors de la session)
 
-> **Méthode** : clone local effectué pendant la session à partir du dépôt `testuflo-ft/docs-serveur-ia`. État des branches au moment du clone (avant l'upload Florian du 2026-11-11).
+> **Méthode** : clone local effectué pendant la session à partir du dépôt `testuflo-ft/docs-serveur-ia`. État des branches au moment du clone, **antérieur à l'upload Florian du 2026-11-11 (commit `11f188a1549e3834016e5e256f079ee18fdc8165`)**. Il s'agit d'une photographie historique ; elle ne reflète pas l'état actuel du dépôt après les publications correctives suivantes.
 
 ### Branche `main`
 
@@ -187,10 +187,10 @@ b9c901945162631a685bff039e5df4b3ebc875c7408d93eab66217e5066ddb89  pur02-sources-
 352b1a8ec7a39431c09d5369e839f6c123d3ed6a13324537db2117bd1618618f  PUR-02-livraison.md
 ```
 
-### Depuis rapport E2E (fournis par ChatGPT, non vérifiables localement — lab détruit)
+### Suite A v4f (scratchpad local — fourni par rapport de session, non revérifié après session)
 
 ```
-773fbe04198bc45d5bc8daea435101fc9cb5461c223d319ce27afdd99a77e06e  pur02-candidate-v4f.test.js  [ENV E2E uniquement]
+773fbe04198bc45d5bc8daea435101fc9cb5461c223d319ce27afdd99a77e06e  pur02-candidate-v4f.test.js  [Suite A simulée 60/60 — scratchpad local — absent de GitHub]
 86043b316bb40bbee3a9cc706d756255bbded05e278e3033ee018f14b1dbd8aa  PUR-02-E-purgeDocument-v4e-fix1b.patch  [confirmé localement]
 ```
 
@@ -198,4 +198,4 @@ b9c901945162631a685bff039e5df4b3ebc875c7408d93eab66217e5066ddb89  pur02-sources-
 
 *Inventaire produit par Claude — 2026-11-11*  
 *Vérification SHA-256 locale via `sha256sum` sur les fichiers présents dans `docs-serveur-ia/`*  
-*Les SHA des fichiers du lab E2E (`pur02-candidate-v4f.test.js`) proviennent du rapport ChatGPT 2026-11-10 et ne sont pas vérifiables localement (lab détruit).*
+*Le SHA de `pur02-candidate-v4f.test.js` provient du rapport de session du 2026-11-10 (fichier présent dans le scratchpad local `~/pur02-consolidation-2026-11-10/scratchpad/tests/`, mais absent des branches GitHub). Il n'a pas été revérifié après la fin de la session.*
