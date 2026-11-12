@@ -52,7 +52,7 @@ Les trois fichiers à déployer ensemble pour appliquer PUR-02-E.
 |---|---|---|
 | `pur02-candidate-v4f.test.js` | `773fbe04198bc45d5bc8daea435101fc9cb5461c223d319ce27afdd99a77e06e` | ✅ Canonique — scénarios 9/10 → `true` |
 
-> **Note** : `pur02-candidate-v4f.test.js` a été utilisée pour les tests simulés 60/60 (pas dans le laboratoire E2E lui-même, qui était distinct). Elle n'est pas présente dans le répertoire local ni sur aucune branche GitHub vérifiée. Son SHA-256 est fourni par ChatGPT à partir du rapport de session du 2026-11-10 et n'a pas été vérifié localement (lab détruit).
+> **Note** : `pur02-candidate-v4f.test.js` a été utilisée pour les tests simulés 60/60 (pas dans le laboratoire E2E lui-même, qui était un environnement distinct). Elle est présente localement dans `~/pur02-consolidation-2026-11-10/scratchpad/tests/pur02-candidate-v4f.test.js` (scratchpad de session), mais **absente des branches GitHub vérifiées** (`main` et `correctif-PUR-02`). Son SHA-256 (`773fbe04…`) a été fourni par rapport de session du 2026-11-10 et n'a pas été revérifié après la fin de la session.
 
 > **Limite de traçabilité** : aucun journal Jest persistant du run 60/60 n'a été retrouvé permettant de démontrer rétrospectivement la correspondance exacte entre chaque fichier, son empreinte SHA-256 et ce run. Ne pas présenter les SHA des suites comme une preuve certifiée du run.
 
@@ -105,7 +105,7 @@ Rapports de validation et d'audit produits pendant le développement de PUR-02.
 |---|---|---|
 | `pur02-candidate.test.js` | OBSOLÈTE (Suite A pré-v4f) | **Supprimer ou archiver ?** Archivage recommandé pour traçabilité historique. |
 | `candidate-lance-index.js` | SUPERSÉDÉ (v4 → v4f) | **Supprimer ou archiver ?** Archivage recommandé. |
-| `pur02-candidate-v4f.test.js` | Absente localement — présente uniquement dans l'env E2E (ChatGPT) | **Rapatrier ?** Utile si un re-test est nécessaire. SHA fourni par rapport E2E, non vérifié localement. |
+| `pur02-candidate-v4f.test.js` | Présente localement dans `~/pur02-consolidation-2026-11-10/scratchpad/tests/` — absente de GitHub | **Publier sur GitHub ?** Utile pour traçabilité et re-test éventuel. SHA déclaré : `773fbe04…`. Aucun journal Jest persistant ne certifie rétrospectivement sa participation exacte au run 60/60. |
 
 ---
 
@@ -124,7 +124,7 @@ Rapports de validation et d'audit produits pendant le développement de PUR-02.
 | `pur02-http-handler.test.js` | ✅ | Suite B canonique |
 | `pur02-path-security.test.js` | ✅ | Suite C canonique |
 | `pur02-lance-v4f.test.js` | ✅ | Suite L/R canonique |
-| `pur02-candidate-v4f.test.js` | ❌ | **Absente de toutes les branches GitHub** — utilisée uniquement dans l'env local/scratchpad lors des tests 60/60 |
+| `pur02-candidate-v4f.test.js` | ❌ | **Absente de toutes les branches GitHub** — présente localement dans `~/pur02-consolidation-2026-11-10/scratchpad/tests/` lors des tests simulés 60/60 |
 | `pur02-sources-1.19.0/` | ✅ | Dossier sources v1.19.0 complet |
 | `PUR-02-E-purgeDocument-v4e-fix1b.patch` | ✅ | Patch fix#1b |
 | Rapports et documents `docs-serveur-ia/` | ✅ | Présents sur `main` |
@@ -149,7 +149,7 @@ Rapports de validation et d'audit produits pendant le développement de PUR-02.
 
 > **Conséquence** : pour déployer PUR-02-E, il faudra récupérer les 3 candidats depuis deux branches différentes. Aucune des deux branches ne contient les 3 composants réunis.
 
-> **`pur02-candidate-v4f.test.js`** : absente de toutes les branches GitHub vérifiées. Elle n'était présente que dans l'environnement scratchpad/tests/ local pendant les tests simulés du 2026-11-10. Son SHA-256 déclaré (`773fbe04…`) n'est pas vérifiable via GitHub.
+> **`pur02-candidate-v4f.test.js`** : absente de toutes les branches GitHub vérifiées (`main` et `correctif-PUR-02`). Elle est présente localement dans `~/pur02-consolidation-2026-11-10/scratchpad/tests/` — c'est l'emplacement où elle a été utilisée pour les tests simulés 60/60 du 2026-11-10. Son SHA-256 déclaré (`773fbe04…`) n'est pas vérifiable via GitHub. Aucun journal Jest persistant ne certifie rétrospectivement sa participation exacte au run.
 
 ---
 

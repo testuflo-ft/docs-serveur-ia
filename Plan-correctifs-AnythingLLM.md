@@ -1,7 +1,7 @@
 # Correctifs ciblés --- AnythingLLM (audit 1.17.0 ; instance 1.19.0 depuis le 25/10/2026)
 
 *Version 0.9 (mise à jour documentaire 11 novembre 2026) — base : v0.8 du 8 novembre 2026*\
-*Statut : plan révisé après le bilan du 28/10/2026. Deux changements de production sont rapportés : DOS-02 (limite de corps sur `/api/embed`, image 1.19.0, preuve statique) et ALLM-10 (protection de suppression de workspace activée le 27/10/2026, test unitaire seulement). INT-18 et INT-20/PUR-02 sont corrigés en laboratoire uniquement. CP-3 n'est pas appliqué. Aucun test de la matrice n'est déclaré exécuté par cette session ; les tests de laboratoire rapportés sont partiels.*\
+*Statut : plan révisé après le bilan du 28/10/2026. Deux changements de production sont rapportés : DOS-02 (limite de corps sur `/api/embed`, image 1.19.0, preuve statique) et ALLM-10 (protection de suppression de workspace activée le 27/10/2026, test unitaire seulement). INT-18 et INT-20/PUR-02 sont corrigés en laboratoire uniquement. CP-3 n'est pas appliqué. La plupart des tests généraux de la matrice restent à exécuter. Exception : **PUR-02-E** dispose de résultats spécifiques documentés — 60/60 tests simulés (Node.js 18.20.8, Jest 29.7.0) et 4/4 scénarios E2E PASS (instance jetable, 2026-11-10) — ces résultats ne s'étendent pas aux autres correctifs de la matrice. Statut PUR-02-E : non déployé en production.*\
 *Mise à jour 05/11/2026 : PUR-02 v4e + fix#1b — contre-revue indépendante favorable ; 52/52 tests PASS (22 Suite A + 16 Suite B + 14 Suite C) ; statut : candidat prêt pour essai isolé, non déployé.*\
 *Mise à jour 08/11/2026 : compagnon LanceDB v4f — `deleteDocumentFromNamespace()` → `true` pour no-ops ; 8/8 PASS [LAB] ; 5 corrections audit ChatGPT (chemin portable, R-02 vrai test d'intégration, UUID déterministes, spy + vérification docId) ; test SHA final `11d835b2…` ; candidat SHA `8103f042…` inchangé. Statut PUR-02-E inchangé. D6, §4 et matrice mis à jour ci-dessous.*\
 *Mise à jour 11/11/2026 : PUR-02-E E2E sur instance jetable (ChatGPT, 2026-11-10) — 4/4 scénarios E2E PASS (`E2E_PUR02_RESULT=PASS`) — tests d'intégration du traitement de purge (pas tests HTTP) ; 60/60 tests simulés (22A v4f + 16B + 14C + 8L/R, Node.js 18.20.8, Jest 29.7.0) ; lab détruit, production inchangée. D6, matrice PUR-02, §4 mis à jour ci-dessous. **Non déployé — déploiement requiert autorisation explicite de Florian.***
@@ -576,14 +576,14 @@ isolé ; une archive créée ne prouve pas qu'elle est restaurable.
 
 ## 6. Matrice maîtresse de tests
 
-**Aucun test ci-dessous n'est déclaré validé dans le cadre de ce
-plan** (32 identifiants) ; la colonne d'état signale les résultats
-partiels rapportés [PROD]/[LAB] le 28/10/2026. Tests uniquement en environnement de
+La plupart des 32 identifiants ci-dessous **restent à exécuter** en environnement de
 laboratoire isolé avec données factices, après vérification que le
-conteneur de laboratoire est démarré. Une inspection statique ne remplace
-pas un test fonctionnel. SEC-02 à SEC-05 ne concernent que l'évaluation
-éventuelle de CP-3 (D1) ; RAG-03 est scindé en RAG-03A/B (ALLM-06) ;
-SEC-10 est nouveau (conséquences de `dumpENV()`).
+conteneur de laboratoire est démarré. **Exception : PUR-02** dispose de
+résultats spécifiques documentés (voir ligne PUR-02 ci-dessous) — ces résultats
+ne s'étendent pas aux autres correctifs ou identifiants de la matrice.
+Une inspection statique ne remplace pas un test fonctionnel. SEC-02 à SEC-05
+ne concernent que l'évaluation éventuelle de CP-3 (D1) ; RAG-03 est scindé
+en RAG-03A/B (ALLM-06) ; SEC-10 est nouveau (conséquences de `dumpENV()`).
 
 | ID | Catégorie | Scénario | Résultat attendu / preuve | État |
 |---|---|---|---|---|

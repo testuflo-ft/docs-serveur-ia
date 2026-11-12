@@ -135,7 +135,7 @@ b9c901945162631a685bff039e5df4b3ebc875c7408d93eab66217e5066ddb89  api-document-i
 | Suite C — 14 scénarios sécurité chemins | **14 / 14 PASS** |
 | **Total v4e + fix#1b** | **52 / 52 PASS** |
 
-### v4e + fix#1b + LanceDB v4f (2026-11-08) — 60/60 PASS [LAB]
+### v4e + fix#1b + LanceDB v4f (2026-11-10) — 60/60 PASS [LAB]
 
 | Contrôle | Résultat |
 |---|---|
@@ -314,7 +314,7 @@ Voir §7 pour l'historique complet des corrections v1 → v4e + fix#1b.
 | D-2 | `normalizePath("../secret")` stripait le `../` → purge d'une cible existante possible | Vérification pré-normalisée : `FOLDER_NAME_INVALID` si `folderName` contient `/` ou `\` ou est `".."` ou `"."` |
 | — | Incohérence empreintes entre audit et livraison | SHA normalisés ; total 52/52 PASS |
 
-### v4e + fix#1b → PUR-02-E avec LanceDB v4f (2026-11-08)
+### v4e + fix#1b → PUR-02-E avec LanceDB v4f (2026-11-10)
 
 | # | Problème | Correction |
 |---|---|---|
