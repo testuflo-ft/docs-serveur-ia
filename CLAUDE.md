@@ -30,6 +30,33 @@
 
 ---
 
+## État documentaire publié — référence 14/11/2026
+
+Vérifié le 14/11/2026 par git fetch + diff. Local = publié (0 ligne de diff pour les 3 docs + CLAUDE.md + candidats). GitHub accessible en lecture anonyme via proxy git.
+
+### Branch `main` — HEAD `22a15eff33c46bf8496e6d85e3f3c006b47420a3` (2026-11-14 12:26:13 +0800)
+
+| Fichier | SHA-256 | Git blob |
+|---------|---------|----------|
+| `Journal-des-Incidents.md` | `6c87f440934e43aff3aabcc5819dfcd899013c9373b61e2edae589332187b22b` | `301228db1041db2074099b3dcd8016b0b6531de0` |
+| `Livret-Technique-Serveur-IA.md` | `6c4bd30506062a4c568b8a963c29a69ef95dd6787a069bf4d914e48312e9583d` | `5335cc6b4a8470cbb083cd1238dce5ad3dca28ec` |
+| `Plan-correctifs-AnythingLLM.md` | `9516afabef559f560e7c98becbe09c92bb2d943274dcda9abf1a01907ad70c92` | `099c7011c6b1988ab02f4b7430896dbba5a43c66` |
+| `CLAUDE.md` | `a03c9bb398508d56d2cc5a778596395fa2d12f523439a33d5be05ac65a3321ee` | `80814c9499ca0e762fce2749e1b37e904788707e` |
+| `candidate-purgeDocument-v4e.js` | `90a21b0488dfd78ee744b35ae02cd9a6b1e629ead17a88cec5bda49ae4875f79` | `a5aaed269a2265ba37e61375e4a0fb5804d9ebb0` |
+
+### Branch `correctif-PUR-02` — HEAD `d156f2377c808cc937ceb6dbd63a21a2424d69f3` (2026-11-08 17:47:54 +0800)
+
+| Fichier | SHA-256 | Git blob |
+|---------|---------|----------|
+| `candidate-documents.js` | `de9c586043cbf63f70c4070cc18bc2f0871bc3a8b1d8caa79f32248fba8152eb` | `dc2a159496c043e8dfd526d9913472d125aa53ea` |
+| `candidate-lance-index-v4f.js` | `8103f042a0fed63db1d6f79db61ceb6eef97687e87893bec9747abe1d2c9149f` | `600f9f53f935340a5f9b0f80f6673be4fe379982` |
+| `pur02-lance-v4f.test.js` | `11d835b2eb1ed91b97ac6c9be6f9fae7bb5c585fbe0dd70ae7e306c65917a465` | `9b0131e6b48893051870284c60cc49071e08dd72` |
+
+> Les 3 docs + CLAUDE.md sont les versions post-6 vagues d'éditions (session 14/11/2026).
+> `pur02-candidate-v4f.test.js` SHA `773fbe04…` : **absent de GitHub** — uniquement dans `~/pur02-consolidation-2026-11-10/scratchpad/tests/` sur le Mac de Florian.
+
+---
+
 ## Empreintes SHA-256 — candidats PUR-02-E
 
 | Fichier | SHA-256 |
@@ -150,6 +177,29 @@ Décision D1 ouverte.
 - Ne pas monter le NAS en environnement de test
 - Ne pas utiliser la base, les volumes Docker ou les documents de production
 - Ne pas appeler les routes env-dump sur la production (risque de modification du .env)
+
+---
+
+## Accès GitHub depuis une session cloud (référence pour prochaine session)
+
+Le dépôt `testuflo-ft/docs-serveur-ia` est public. Depuis un conteneur cloud Claude Code :
+
+| Méthode | Fonctionne | Notes |
+|---------|-----------|-------|
+| `git fetch/clone/show` (proxy git anonyme) | ✅ | Méthode principale |
+| `gh api repos/...` (REST) | ✅ après `unset GH_TOKEN` | Si GH_TOKEN invalide → 403, désactiver d'abord |
+| `gh repo view` / GraphQL | ❌ bloqué | "GitHub GraphQL is not available from Claude Code sessions" |
+| `WebFetch` sur github.com / api.github.com / raw.githubusercontent.com | ❌ bloqué | URL not on allowlist / robots_disallowed |
+
+**Procédure d'accès :**
+1. Vérifier que le clone existe : `git -C /home/claude/testuflo-ft/docs-serveur-ia rev-parse HEAD`
+2. Récupérer les mises à jour : `git -C /home/claude/testuflo-ft/docs-serveur-ia fetch origin`
+3. Si git échoue : appeler `mcp__claude-code-remote__add_repo(owner="testuflo-ft", repo="docs-serveur-ia", access="read")` puis refaire le fetch
+4. Lire un fichier publié sans toucher au working tree : `git show origin/main:chemin/vers/fichier.js`
+5. Obtenir les blob SHAs : `git ls-tree origin/main fichier.js`
+
+Le clone local est à `/home/claude/testuflo-ft/docs-serveur-ia` (remote `origin` = `https://github.com/testuflo-ft/docs-serveur-ia`).
+`pur02-candidate-v4f.test.js` SHA `773fbe04…` : absent de GitHub, déposé dans `main/Asked_by_Claude/` lors de la session 14/11/2026 (accessible via `git show`).
 
 ---
 
