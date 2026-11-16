@@ -253,7 +253,7 @@ RETRY (purgeDocument appelé de nouveau)
   Fichier source          :  ABSENT  ✅  ← supprimé seulement ici
 ```
 
-**Conclusion :** Le scénario findMany OK + LanceDB OK + SQL FAIL est entièrement récupérable par un retry, sans orphelins permanents, à condition que l'échec SQL soit transitoire. L-03 idempotente est le mécanisme clé qui rend le retry transparent.
+**Conclusion :** Le scénario findMany OK + LanceDB OK + SQL FAIL est récupérable par un retry lorsque l'échec SQL est transitoire **et** que `table.delete()` accepte sans erreur un prédicat ne correspondant plus à aucune ligne. Cette dernière propriété — l'idempotence de L-03 — reste déduite de l'implémentation Rust et de la sémantique SQL standard, et non confirmée sur la version exacte utilisée (`@lancedb/lancedb@0.15.0`). Voir addendum PUR-02-G-addendum-lancedb-20261116.
 
 ---
 
