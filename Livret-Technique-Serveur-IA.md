@@ -1,6 +1,6 @@
 # Livret Technique — Serveur IA Mac mini + Synology
 
-*Version 1.0 — 11 novembre 2026*
+*Version 0.9 — 8 novembre 2026*
 
 **Statuts utilisés dans ce document :**
 - ✅ Vérifié — constat direct, sortie de commande ou code examiné
@@ -232,12 +232,17 @@ tailscale serve --bg --set-path /docs http://servor:8090
 | Conteneur | Image | Port hôte | Restart | Statut |
 |-----------|-------|-----------|---------|--------|
 | open-webui | ghcr.io/open-webui/open-webui:main | 3000→8080 | unless-stopped | ✅ Actif, healthy |
-| anythingllm | mintplexlabs/anythingllm:latest (version 1.19.0 depuis le 25/10/2026 [IMG]) | 3001→3001 | unless-stopped | ✅ Actif, healthy [IMG] |
+| anythingllm | mintplexlabs/anythingllm:latest (version 1.19.0 depuis le 25/10/2026 [IMG]) | 3001→3001 | unless-stopped | ✅ Actif, healthy [IMG][PROD-19nov] |
 | n8n | n8n | 5678→5678 | — | ⚙️ Actif, non configuré |
 | home-assistant | homeassistant/home-assistant | 8123→8123 | — | ⚙️ Actif, non configuré |
 | homer | b4bz/homer | 8888→8080 | — | ⚙️ Actif, config partielle |
 | nextcloud | nextcloud | — | — | 🔲 Arrêté, reconfiguration MariaDB en cours |
 | open-webui-before-oidc | ghcr.io/open-webui/open-webui:main | — | — | 🗄️ **Ne pas supprimer avant validation complète** |
+| anythingllm-fixlab | mintplexlabs/anythingllm (version non précisée) | — | — | 🛑 Arrêté, aucun montage, aucun port — **non utilisable comme laboratoire** [PROD-19nov] |
+| anythingllm-cp3-test | mintplexlabs/anythingllm (version non précisée) | — | — | 🛑 État `created`, commande `sleep infinity`, aucun montage — **non utilisable, ne pas démarrer** [PROD-19nov] |
+| anythingllm-ops02-lab | (à créer) | 127.0.0.1:3002→3001 | non | 🔲 **Non créé** — en attente d'autorisation de démarrage |
+
+**Volumes anonymes non attachés :** 7 recensés le 19 novembre 2026, provenance inconnue — **ni à utiliser ni à supprimer** [PROD-19nov].
 
 ### 5.3 Volumes Docker persistants
 
@@ -245,8 +250,10 @@ tailscale serve --bg --set-path /docs http://servor:8090
 |--------|---------|-----------|-----------------|
 | open-webui | Données utilisateurs, conversations, config | open-webui | /app/backend/data |
 | anythingllm | Storage, vector cache, SQLite | anythingllm | /app/server/storage |
+| anythingllm-ops02-lab | Storage de laboratoire (à créer) | anythingllm-ops02-lab | /app/server/storage |
 
-**⚠️ Ne jamais supprimer ces volumes.**
+**⚠️ Ne jamais supprimer les volumes de production (`open-webui`, `anythingllm`).**
+**⚠️ Volume `anythingllm-ops02-lab` : non encore créé au 19/11/2026. Aucun partage ni lien avec le volume de production.**
 
 ### 5.4 Bind mounts NAS → conteneurs
 
@@ -326,6 +333,8 @@ OAUTH_CLIENT_SECRET et WEBUI_SECRET_KEY : **emplacement uniquement → `~/.confi
 | Version exécutée | 1.19.0, arm64, mise à jour du 25/10/2026 [IMG] ; ID `sha256:ddf73304a4a96e2f90755d620dd3921de9afb4b8b8e914fa62d6ce7944ba95af` |
 | Code audité | v1.17.0 [C17] (commit `fa7ec877f005a21ede94888b3b8618b700343857`) ; branche principale [CM] (commit `a5bb8b9c7b1262635ea58fc17d4899619cbf58e9`) ; aucun tag amont 1.19.0 |
 | Configuration [PROD] | `~/services/ai-stack/compose.yaml` et `anythingllm.env` ; `DEPLOYMENT_VERSION=1.19.0` ; `WORKSPACE_DELETION_PROTECTION=true` (ALLM-10, activée le 27/10/2026) ; sauvegarde `~/services/ai-stack/backup-allm10-20261027-170318` |
+| Configuration vérifiée [PROD-19nov] | `ANYTHING_LLM_RUNTIME=docker`, `DEPLOYMENT_VERSION=1.19.0`, `EMBEDDING_ENGINE=native`, `LLM_PROVIDER=ollama`, `NODE_ENV=production`, `OLLAMA_BASE_PATH=http://host.docker.internal:11434`, `OLLAMA_KEEP_ALIVE_TIMEOUT=300`, `OLLAMA_MODEL_PREF=mistral:latest`, `SERVER_PORT=3001`, `STORAGE_DIR=/app/server/storage`, `VECTOR_DB=lancedb`, `WORKSPACE_DELETION_PROTECTION=true` |
+| Secrets (présence) [PROD-19nov] | `AUTH_TOKEN` : absent ; `JWT_SECRET` : présent ; `SIG_KEY` : présent ; `SIG_SALT` : présent. Aucune valeur secrète relevée ni à reproduire dans le laboratoire |
 | Retour arrière [IMG] | `/Users/florian/services/ai-stack/backup-anythingllm-20261025-091540/` + tag `mintplexlabs/anythingllm:rollback-20261025-091540` ; restauration non essayée |
 | Vector DB | LanceDB |
 | Embeddings | BGE-M3 via Ollama |
@@ -604,21 +613,22 @@ La suppression physique est récursive mais la purge des index ne l'est pas. Sou
 
 **Action :** parcours récursif explicite avant suppression physique ; vérifier les rejets async ; tester avec arborescence imbriquée.
 
-**PUR-02-E — Statut final (2026-11-10/11) :** 3 candidats (`candidate-purgeDocument-v4e.js` SHA `90a21b04…`, `candidate-documents.js` SHA `de9c5860…`, `candidate-lance-index-v4f.js` SHA `8103f042…`) ; 60/60 tests PASS (22A v4f + 16B + 14C + 8L/R) + 4 scénarios E2E PASS (instance jetable `pur02-e2e-runtime-20261110`). Points couverts :
+**PUR-02 v4e + fix#1b — Statut correctif (2026-11-05) :** candidat validé par 52/52 tests — 22 Suite A (unitaires), 16 Suite B (handler HTTP), 14 Suite C (sécurité chemins). Points couverts :
 - `purgeFolder()` avorte si un sous-répertoire est présent (UNSUPPORTED_FOLDER_ENTRY) → plus d'index orphelin (ALLM-16 corrigé, non déployé)
 - `purgeDocument()` : `_getWorkspacesStrict()` propage les erreurs SQL ; `normalizePath` appliqué avant toutes les opérations
-- `deleteDocumentFromNamespace()` : requête Prisma directe, erreurs SQL et LanceDB propagées ; LanceDB v4f → `true` pour no-ops (fix rollback `addDocuments()`)
+- `deleteDocumentFromNamespace()` : requête Prisma directe, erreurs SQL et LanceDB propagées
 - `removeDocuments()` : `_getStrict()` sans try/catch ; LanceDB avant SQL ; `prisma.$transaction([...])` pour atomicité SQL-SQL
-- Défaut D-2 (fix#1b) : vérification pré-normalisation → 400 `FOLDER_NAME_INVALID` (fix#1b = `purgeDocument-v4e` **uniquement**, ≠ LanceDB v4f)
+- Défaut D-2 (fix#1b) : vérification pré-normalisation → 400 `FOLDER_NAME_INVALID`
 - Codes d'erreur canoniques : `FOLDER_NAME_REQUIRED`, `FOLDER_NAME_INVALID`, `FOLDER_OUTSIDE_DOCUMENTS`, `FOLDER_PROTECTED`, `FOLDER_NOT_FOUND`
-- Limite L-1 (non-atomicité LanceDB/SQL) : **confirmée empiriquement par E2E-04** ; remédiation manuelle documentée
-- Contre-revue indépendante favorable (ChatGPT, 2026-11-04 et 2026-11-10). Patch SHA-256 `86043b31…`.
-- Lab détruit après E2E. Production inchangée. **Non déployé — déploiement requiert autorisation explicite de Florian.**
+- Limite L-1 (non-atomicité LanceDB/SQL) confirmée par S05 ; remédiation manuelle documentée
+- Contre-revue indépendante favorable (ChatGPT, 2026-11-04). Patch SHA-256 `86043b31…`.
 Voir section 14.22 et fichier `PUR-02-livraison.md`.
+
+**Compagnon LanceDB v4f (2026-11-08) :** anomalie dans `deleteDocumentFromNamespace()` v4 : retournait `false` pour les no-ops (namespace absent ou 0 vecteur). Dans `addDocuments()`, `vectorsRemoved = deleted !== false` → `DocumentVectors.delete()` non appelé → nettoyage SQL silencieusement sauté lors d'un rollback. `candidate-lance-index-v4f.js` corrige → `return true` pour no-ops. Impact sur PUR-02-E : aucun (retour ignoré dans `removeDocuments()`). Impact sur rollback `addDocuments()` : corrigé. 8/8 PASS. SHA-256 `8103f042…`. Voir section 14.22.
 
 ### 14.13 Plan de test consolidé — avant d'activer n8n
 
-**Les tests de cette matrice générale (SEC-*, RAG-*, OPS-*, INT-*, UPLOAD-*, RACE-*) ne sont pas déclarés validés** (32 identifiants ; des résultats partiels de laboratoire [LAB] et un test unitaire de production [PROD] sont rapportés dans la colonne « Exécuté ? » ; l'état réel de ces tests de la matrice générale n'est pas connu de cette version — les résultats [LAB] concernent le conteneur `anythingllm-fixlab` historique, **à ne pas confondre** avec le laboratoire E2E jetable PUR-02 qui, lui, a été créé, utilisé et **détruit** lors des tests du 10/11/2026 ; les tests de la matrice générale restent non exécutés ou partiellement exécutés). **Exception : PUR-01 et PUR-02** font l'objet de validations spécifiques rapportées dans leurs colonnes respectives et détaillées dans §14.22 et `PUR-02-livraison.md`. Ces validations PUR-02 (60/60 tests simulés + 4 scénarios E2E) sont distinctes des tests généraux non exécutés — elles ne valident pas les autres lignes de la matrice. Tests uniquement en laboratoire isolé avec données factices, **après vérification que le conteneur de laboratoire est démarré**. Ne pas se limiter au code HTTP ou à `success: true` : vérifier pour chaque test touchant des documents — système de fichiers, associations SQL, enregistrements `DocumentVectors`, vecteurs LanceDB, cache vectoriel, résultat HTTP et logs expurgés de secrets. SEC-02 à SEC-05 ne concernent que l'évaluation éventuelle de CP-3 ; RAG-03 est scindé en RAG-03A/B (ALLM-06) ; SEC-10 est nouveau.
+**Aucun test n'est déclaré validé** (32 identifiants ; des résultats partiels de laboratoire [LAB] et un test unitaire de production [PROD] sont rapportés dans la colonne « Exécuté ? » ; l'état réel du laboratoire n'est pas connu de cette version). Tests uniquement en laboratoire isolé avec données factices, **après vérification que le conteneur de laboratoire est démarré**. Ne pas se limiter au code HTTP ou à `success: true` : vérifier pour chaque test touchant des documents — système de fichiers, associations SQL, enregistrements `DocumentVectors`, vecteurs LanceDB, cache vectoriel, résultat HTTP et logs expurgés de secrets. SEC-02 à SEC-05 ne concernent que l'évaluation éventuelle de CP-3 ; RAG-03 est scindé en RAG-03A/B (ALLM-06) ; SEC-10 est nouveau.
 
 | ID | Catégorie | Scénario | Résultat attendu / preuve | Exécuté ? |
 |---|---|---|---|---|
@@ -639,18 +649,18 @@ Voir section 14.22 et fichier `PUR-02-livraison.md`.
 | RAG-04 | Import | Échec d'embedding/indexation simulé | Échec explicite, pas de faux `success: true` ; comparer avec le comportement 1.19.0 (propagation de `embedded.success`) | À exécuter |
 | RAG-05 | Cohérence | Échec SQL après insertion LanceDB | Retour arrière des vecteurs tenté (code amont) ou état de réparation signalé ; contrôler SQL, `DocumentVectors` et LanceDB | À exécuter |
 | PUR-01 | Purge | Purge dossier factice avec sous-dossiers | Pas de référence résiduelle non signalée dans SQL, `DocumentVectors`, LanceDB ou cache | Partiel en laboratoire [LAB] : purge récursive, dossier supprimé après succès et conservé après erreur simulée, échec simulé de `Document.removeDocuments` propagé ; vraie panne LanceDB/SQL non testée. **v4e + fix#1b (2026-11-05) : 52/52 PASS (22A+16B+14C) ; S01-S09 couverts ; test HTTP de bout en bout restant.** |
-| PUR-02 | Contrat HTTP | `custom-documents`, dossier absent, chemin invalide/imbriqué | `protected`/`not_found`/`invalid` distincts ; aucun faux succès | **PUR-02-E (10/11/2026) :** 60/60 PASS (22A v4f + 16B + 14C + 8L/R) ; 4 scénarios E2E PASS ; `FOLDER_NAME_REQUIRED`, `FOLDER_NAME_INVALID`, `FOLDER_OUTSIDE_DOCUMENTS`, `FOLDER_PROTECTED`, `FOLDER_NOT_FOUND`, `UNSUPPORTED_FOLDER_ENTRY` ; traversée cible existante (C-11..C-14) ; LanceDB v4f no-ops → `true` ; L-1 confirmée empiriquement (E2E-04) ; lab détruit, production inchangée. **Non déployé.** |
+| PUR-02 | Contrat HTTP | `custom-documents`, dossier absent, chemin invalide/imbriqué | `protected`/`not_found`/`invalid` distincts ; aucun faux succès | Candidat v4e + fix#1b [LAB] (05/11/2026) : 52/52 PASS (22A+16B+14C) ; `FOLDER_NAME_REQUIRED`, `FOLDER_NAME_INVALID`, `FOLDER_OUTSIDE_DOCUMENTS`, `FOLDER_PROTECTED`, `FOLDER_NOT_FOUND`, `UNSUPPORTED_FOLDER_ENTRY` ; tests traversée avec cible existante (C-11..C-14) ; pas de test HTTP de bout en bout ; `partial_failure` non rapporté. **Compagnon v4f (08/11/2026) :** `deleteDocumentFromNamespace()` → `true` pour no-ops ; 8/8 PASS ; sans impact sur PUR-02-E |
 | OPS-01 | Sauvegarde | Sauvegarde puis restauration isolée (dont l'archive `storage-anythingllm.tar.gz` du 25/10) | Restauration fonctionnelle et intégrité vérifiée | À exécuter |
 | OPS-02 | Protection | Protection activée en isolé (valeur `1`, puis valeur `0` : la présence seule suffit-elle ?) ; suppression d'un workspace factice par les trois routes (`/admin/workspaces/:id`, `/workspace/:slug`, `/v1/workspace/:slug`) | 403 « Workspace deletion is blocked by the system administrator. » ; workspace préservé | Production : test unitaire du middleware PASS (403, `next()` non appelé) [PROD] ; test HTTP authentifié par route non fait ; laboratoire : à exécuter |
 | DOS-01 | Limite HTTP | Inspection statique de l'image de laboratoire pour `/api/embed` | Code réellement présent documenté ; présence seule ne prouve pas l'activité | Inspection statique de l'image active rapportée le 25/10 [IMG] ; à rejouer sur l'image de laboratoire |
 | DOS-02 | Limite HTTP | Dépassement de la limite `/api/embed` dans l'isolé | HTTP 413 « Request payload too large. » ; processus reste sain ; comparer avec une route hors `/api/embed` (limite globale 3 Go) | À exécuter |
 | INT-17 | Déplacement | Répertoire comme source | Refus ; aucun déplacement ; SQL/vecteurs inchangés | À exécuter |
-| INT-18A | Déplacement | Destination existante mais non indexée | Refus sans écrasement ; source/destination préservées | [LAB bilan 28/10] collision destination → erreur attendue ; indexée/non indexée non distinguées. [consolidation v3 29/10] refus source symbolique PASS, rejet chemin traversant PASS, rollback lot PASS. Contrôle SQL, vecteurs et cache non couvert. Fixlab récupéré le 13/11 (travail retrouvé, non revalidé HTTP, non déployé). |
-| INT-18B | Déplacement | Destination existante déjà indexée | Refus sans altération du contenu, SQL, `DocumentVectors`, LanceDB et cache | [LAB bilan 28/10] collision destination → erreur attendue ; indexée/non indexée non distinguées. [consolidation v3 29/10] refus source symbolique PASS, rejet chemin traversant PASS, rollback lot PASS. Contrôle SQL, vecteurs et cache non couvert. Fixlab récupéré le 13/11 (travail retrouvé, non revalidé HTTP, non déployé). |
+| INT-18A | Déplacement | Destination existante mais non indexée | Refus sans écrasement ; source/destination préservées | Partiel en laboratoire [LAB] : collision avec une destination existante → erreur attendue (indexée / non indexée non distinguées) ; contrôle SQL, vecteurs et cache non rapporté |
+| INT-18B | Déplacement | Destination existante déjà indexée | Refus sans altération du contenu, SQL, `DocumentVectors`, LanceDB et cache | Partiel en laboratoire [LAB] : collision avec une destination existante → erreur attendue (indexée / non indexée non distinguées) ; contrôle SQL, vecteurs et cache non rapporté |
 | INT-18C | Course | Deux opérations concurrentes vers la même destination | Au plus un succès ; aucune corruption ; garantie no-replace prouvée | À exécuter |
-| INT-19A | Lot | Lot valide | Chaque résultat `moved` ; cohérence disque, SQL, mapping, cache | [LAB bilan 28/10] déplacement normal PASS. [consolidation v3 29/10] handler INT-19 invoqué avec Express simulé + vrai helper safeMove : résultats par fichier PASS, lot complet PASS. Cohérence SQL, mapping et cache non rapportée en intégration complète. Fixlab récupéré le 13/11 (travail retrouvé, non revalidé HTTP, non déployé). |
+| INT-19A | Lot | Lot valide | Chaque résultat `moved` ; cohérence disque, SQL, mapping, cache | Partiel en laboratoire [LAB] : déplacement normal PASS ; cohérence SQL, mapping et cache non rapportée |
 | INT-19B | Lot | Élément invalide au milieu du lot | Résultats `moved`/`refused`/`not_executed`/`failed` ; partiel explicitement signalé | Partiel en laboratoire [LAB] : source manquante rejetée, aucune cible créée ; élément invalide au milieu d'un lot non rapporté |
-| INT-19C | Lot | Sources répétées, destinations dupliquées, conflits internes | Prévalidation rejette avant première mutation physique | [LAB bilan 28/10] noms destination en double rejetés avant déplacement, sources conservées. [consolidation v3 29/10] rollback des déplacements précédents si échec ultérieur PASS. Sources répétées et conflits internes non rapportés. |
+| INT-19C | Lot | Sources répétées, destinations dupliquées, conflits internes | Prévalidation rejette avant première mutation physique | Partiel en laboratoire [LAB] : noms de destination en double rejetés avant déplacement, sources conservées ; sources répétées et conflits internes non rapportés |
 | UPLOAD-02A | Upload | Rejet de validation après écriture Multer | Temporaire supprimé ; fichiers légitimes préservés | À exécuter |
 | UPLOAD-02B | Upload | Collector indisponible après réception | Nettoyage déterministe ou reprise explicite ; pas d'accumulation silencieuse | À exécuter |
 | RACE-01 | Course | Deux uploads simultanés de même nom, contenus distincts | Chaque traitement indexe le bon contenu ; aucune collision/corruption | À exécuter |
@@ -703,12 +713,6 @@ Voir section 14.22 et fichier `PUR-02-livraison.md`.
 
 **Mise à jour 2026-11-08 :**
 - **Compagnon LanceDB v4f** : `candidate-lance-index-v4f.js` — `deleteDocumentFromNamespace()` retourne `true` pour les no-ops ; 8/8 PASS (L-01..L-05 + R-01..R-03) ; corrections audit ChatGPT (chemin portable, R-02 vrai test d'intégration) ; SHA `8103f042…`. Sans impact sur PUR-02-E (non déployé). Voir section 14.22.
-
-**Mise à jour 2026-11-10/11 :**
-- **PUR-02-E VALIDÉ E2E** : 4 scénarios E2E PASS sur instance réelle jetable (`pur02-e2e-runtime-20261110`, image dérivée `pur02-e2e:20261110` basée sur `sha256:ddf73304…`, SQLite de zéro, 40 migrations Prisma, LanceDB réel, `NODE_ENV=production`, réseau Docker `none`). Scénarios réels : E2E-01 (purge multi-workspace, 2 workspaces, 2 namespaces LanceDB), E2E-02 (namespace LanceDB absent, no-op), E2E-03 (namespace LanceDB existant mais vide), E2E-04 (échec SQL par trigger + reprise après suppression du trigger). Ces scénarios sont des **tests d'intégration du traitement de purge**, pas des tests HTTP authentifiés. `E2E_PUR02_RESULT=PASS`. Résultat total : **60/60 tests simulés + 4 scénarios E2E PASS**. Conteneur et image dérivée supprimés et vérifiés absents post-tests. Production inchangée.
-- **L-1 confirmée empiriquement** par E2E-04 : `$transaction` SQL échoue après LanceDB ok → exception propagée + log `[removeDocuments] SQL cleanup failed … document_vectors rows … may be orphaned`.
-- **Suite A adaptée** : `pur02-candidate-v4f.test.js` SHA `773fbe04…` (scénarios 9/10 → `true`) est la suite canonique. L'ancienne `pur02-candidate.test.js` SHA `f3e88f13…` (scénarios 9/10 → `false`) est OBSOLÈTE.
-- **Non déployé — déploiement requiert autorisation explicite de Florian.**
 
 **Non testé :** exploitation effective de ces risques ; tous les tests de la matrice.
 
@@ -853,10 +857,7 @@ Dans `server/utils/files/multer.js`, `fileUploadStorage` (l.11-25) et `fileAPIUp
 **Ce qui n'est PAS établi (limites de preuve)**
 
 - ALLM-10 : le test HTTP authentifié de **chaque** route (`DELETE /workspace/:slug`, `DELETE /v1/workspace/:slug`, `DELETE /admin/workspaces/:id`) n'a pas été fait ; OPS-02 reste à exécuter en laboratoire. Le test unitaire du middleware ne remplace pas un test HTTP.
-- INT-18 et INT-20/PUR-02 : **ni validés, ni déployés** *(état au 28/10/2026)*. Tests par mocks, sans test HTTP de bout en bout, sans vraie panne LanceDB/SQL, sans contrôle de l'état SQL/`DocumentVectors`/LanceDB/cache. Le déplacement n'est pas atomique : une erreur d'E/S réelle pendant la phase de déplacement peut laisser un état partiel. Certaines erreurs SQL de nettoyage peuvent être absorbées par le code existant. INT-18C (concurrence), INT-17, INT-19B (élément invalide au milieu d'un lot), sources répétées et conflits internes d'INT-19C ne sont pas couverts par le bilan. L'image de base du laboratoire n'est pas précisée : à comparer à l'ID de production avant de tirer une conclusion.
-
-  > **Mise à jour PUR-02 (10/11/2026) :** le constat ci-dessus concernant PUR-02 est dépassé depuis le 10/11. PUR-02 est validé : 60/60 tests simulés PASS + 4/4 scénarios E2E d'intégration PASS sur instance jetable avec SQLite/Prisma et LanceDB réels. Laboratoire jetable détruit post-tests. Production inchangée. **Correctif non déployé.** Les tests HTTP authentifiés des routes de production ne sont **pas** couverts par ces E2E et restent à effectuer séparément si nécessaire. INT-18 reste non validé dans son ensemble ; cette validation ne s'étend pas à INT-18.
-
+- INT-18 et INT-20/PUR-02 : **ni validés, ni déployés**. Tests par mocks, sans test HTTP de bout en bout, sans vraie panne LanceDB/SQL, sans contrôle de l'état SQL/`DocumentVectors`/LanceDB/cache. Le déplacement n'est pas atomique : une erreur d'E/S réelle pendant la phase de déplacement peut laisser un état partiel. Certaines erreurs SQL de nettoyage peuvent être absorbées par le code existant. INT-18C (concurrence), INT-17, INT-19B (élément invalide au milieu d'un lot), sources répétées et conflits internes d'INT-19C ne sont pas couverts par le bilan. L'image de base du laboratoire n'est pas précisée : à comparer à l'ID de production avant de tirer une conclusion.
 - Le code des correctifs de laboratoire n'a pas été relu par Claude ; il n'est pas dans le dépôt documentaire.
 
 **Hypothèses**
@@ -879,15 +880,12 @@ Dans `server/utils/files/multer.js`, `fileUploadStorage` (l.11-25) et `fileAPIUp
 
 **Vérifications restantes (lecture seule d'abord ; aucune ne modifie la production)**
 
-1. *(Historique — 28/10/2026)* Exporter les correctifs depuis `anythingllm-fixlab` (`docker diff`, `docker cp` des quatre fichiers modifiés, SHA-256 consignés). — **PUR-02 : supersédé** — les trois candidats sont documentés avec SHA-256 sur les branches GitHub `main` et `correctif-PUR-02`. — **INT-18 : ✅ récupération effectuée le 13/11/2026** — 16 fichiers extraits vers `/Users/florian/INT18-recovery-20261113` ; `purgeDocument.js` fixlab SHA `0717505a…`, `index.js` SHA `959ee973…` (conteneur arrêté, non redémarré ni modifié). Travail retrouvé ; non revalidé HTTP, non déployé.
-2. *(Historique — 28/10/2026)* Vérifier que `anythingllm-fixlab` est démarré et comparer son image à la production. — **PUR-02 : non pertinent** — candidats documentés séparément avec SHA-256. — **INT-18 : ✅ conteneur `anythingllm-fixlab` vérifié le 13/11/2026** — arrêté depuis ~2 semaines, image identique à la production (`sha256:ddf73304…`), couche inscriptible préservée ; correctifs non redémarrés ni modifiés.
+1. Exporter les correctifs de laboratoire avant tout arrêt du laboratoire (`docker diff anythingllm-fixlab`, `docker cp` des quatre fichiers modifiés vers un dossier hôte, SHA-256 consignés).
+2. Vérifier que `anythingllm-fixlab` est démarré (`docker ps --filter name=anythingllm-fixlab`) et comparer son image à celle de la production (`docker inspect anythingllm-fixlab --format '{{.Config.Image}} {{.Image}}'`).
 3. Confirmer que `WORKSPACE_DELETION_PROTECTION` figure dans `compose.yaml` et non dans `anythingllm.env` (`grep -c` sur le nom de la variable, sans afficher les autres lignes).
 4. OPS-02 en laboratoire (trois routes, valeur `true`, `1` puis `0`).
-5. Vérifications restantes par correctif (état au 10/11/2026) :
-   - **PUR-02** : 60/60 tests simulés + 4/4 scénarios E2E d'intégration PASS, contrôle SQLite/Prisma et LanceDB réels réalisé dans le laboratoire jetable. Les tests HTTP authentifiés des routes de production ne sont **pas** couverts par ces E2E et restent à effectuer séparément si nécessaire. **Non déployé.**
-   - **INT-18/19** : archives de consolidation v3 (22/22 PASS, 29/10) et fixlab récupéré (16 fichiers, 13/11) disponibles comme base de travail — travail retrouvé, non revalidé HTTP. INT-18C (concurrence), INT-19B (élément invalide au milieu d'un lot), sources répétées et conflits internes d'INT-19C et tests HTTP de bout en bout demeurent à effectuer.
-   - **OPS-02** : les trois tests HTTP authentifiés de protection de suppression des workspaces restent à effectuer en laboratoire.
-   - **ALLM-12** : son état et ses vérifications restent indépendants de PUR-02 ; voir ci-dessous.
+5. Tests HTTP de bout en bout et contrôle SQL/`DocumentVectors`/LanceDB/cache pour INT-18, INT-20 et PUR-01/02 ; INT-18C et INT-19B/C complémentaires.
+6. ALLM-12 : protocole de lecture seule puis laboratoire décrit dans le Plan v0.6, §2.7.
 
 **ALLM-12 :** protocole de lecture seule puis de laboratoire préparé dans le Plan v0.6 §2.7 ; non exécuté ; CP-3 non appliqué.
 
@@ -994,58 +992,15 @@ Corrections appliquées sur suggestion audit ChatGPT — deux séries : (1) chem
 
 SHA-256 `candidate-lance-index-v4f.js` (`8103f042…`) vérifié sur `correctif-PUR-02` par ChatGPT (08/11/2026). SHA-256 `pur02-lance-v4f.test.js` (`11d835b2…`) : version finale après 5 corrections, rapportée par la session Claude.
 
-**Statut v4f :** non déployé. Ajout Suite L/R portant le total à 60/60 (voir ci-dessous).
-
----
-
-#### E2E sur instance jetable (2026-11-10)
-
-**Environnement** : conteneur `pur02-e2e-runtime-20261110`, image dérivée de la production (`sha256:ddf73304…`), 40 migrations Prisma depuis zéro. Exécuté par ChatGPT sur minimac. Aucune modification de la production.
-
-**Résultat : `E2E_PUR02_RESULT=PASS`**
-
-> Ces quatre scénarios sont des **tests d'intégration du traitement de purge** dans un laboratoire isolé. Ils ne constituent **pas** quatre tests HTTP authentifiés des routes de production.
-
-| Scénario | Description réelle | Résultat |
-|---|---|---|
-| E2E-01 | **Purge multi-workspace nominale** : document associé à deux workspaces, vecteurs dans les deux namespaces LanceDB | ✅ PASS |
-| E2E-02 | **Namespace LanceDB absent** : no-op reconnu, nettoyage SQL effectué | ✅ PASS |
-| E2E-03 | **Namespace LanceDB existant mais vide** : 0 vecteur, nettoyage SQL effectué | ✅ PASS |
-| E2E-04 | **Échec SQL par trigger + reprise** : 1re tentative → LanceDB ok, `$transaction` échoue (`Foreign key constraint failed`), conservé ; 2e tentative → PASS | ✅ PASS (comportement attendu) |
-
-Conteneur `pur02-e2e-runtime-20261110` **supprimé** et vérifié absent. Image dérivée `pur02-e2e:20261110` **supprimée** et vérifiée absente. Production inchangée (`RestartCount=0`).
-
-**Suite A adaptée pour v4f (2026-11-10)** : `pur02-candidate-v4f.test.js` (SHA `773fbe04…`) — scénarios 9/10 retournent désormais `true` (au lieu de `false`). L'ancienne `pur02-candidate.test.js` (SHA `f3e88f13…`, scénarios 9/10 → `false`) est **obsolète**.
-
-**Total consolidé :** 22 Suite A v4f + 16 Suite B + 14 Suite C + 8 Suite L/R = **60/60 PASS**
-
-> **60 ≠ 52** : les 52 du 04/11 n'incluaient pas la Suite L/R et utilisaient la Suite A v4e (scénarios 9/10 → `false`).
-
-#### Candidats actifs PUR-02-E (SHAs vérifiés 2026-11-11)
-
-| Fichier | SHA-256 | Rôle |
-|---|---|---|
-| `candidate-purgeDocument-v4e.js` | `90a21b04…` | Purge — v4e + fix#1b |
-| `candidate-documents.js` | `de9c5860…` | Modèle Document |
-| `candidate-lance-index-v4f.js` | `8103f042…` | LanceDB v4f |
-| Patch `PUR-02-E-purgeDocument-v4e-fix1b.patch` | `86043b31…` | |
-
-Suites canoniques :
-
-| Suite | Fichier | SHA-256 |
-|---|---|---|
-| A (v4f) | `pur02-candidate-v4f.test.js` | `773fbe04…` |
-| B | `pur02-http-handler.test.js` | `cb9702bd…` |
-| C | `pur02-path-security.test.js` | `89e32abc…` |
-| L/R | `pur02-lance-v4f.test.js` | `11d835b2…` |
+**Statut v4f :** non déployé. Statut PUR-02-E (v4e + fix#1b) inchangé — candidat prêt pour essai isolé, non déployé.
 
 ---
 
 #### Statut global
 
-**PUR-02-E (v4e + fix#1b + LanceDB v4f) :** VALIDÉ — 60/60 tests simulés + 4 scénarios E2E PASS. Lab détruit. Production inchangée. **Non déployé** — déploiement requiert autorisation explicite de Florian.
+**v4e + fix#1b :** VALIDÉ en laboratoire — non déployé. Essai isolé requis avant tout déploiement en production. Exporter les fichiers candidats du conteneur lab avant tout arrêt.
 
-> `fix#1b` est un correctif de `candidate-purgeDocument-v4e.js` uniquement. Il ne concerne pas LanceDB v4f. Ces deux améliorations sont dans des fichiers distincts et indépendants.
+**v4f (compagnon) :** VALIDÉ en tests unitaires — non déployé. Sans impact sur le déploiement de PUR-02-E.
 
 Voir `PUR-02-livraison.md` pour le détail complet de livraison.
 
@@ -1171,9 +1126,10 @@ Toutes ces commandes sont en lecture seule. Elles ne prouvent pas la provenance 
 ---
 
 *Auteur : Florian — élaboré avec Claude et ChatGPT*
-*Sources : notes de passation ChatGPT (9, 11, 12 oct 2026) + conversations Claude oct 2026 + audit AnythingLLM oct 2026 + dossiers ChatGPT 23 oct 2026 + Plan-correctifs v0.4 (24 oct 2026) + passation ChatGPT du 25 oct 2026 + conclusions validées du 25 oct 2026 (21:37) + relecture du code amont par Claude le 25 oct 2026 (tag v1.17.0 et commit a5bb8b9)*
-*Version 1.0 — 11 novembre 2026*
-*Changements v1.0 : intégration résultats E2E PUR-02-E (ChatGPT, 2026-11-10) — 4/4 scénarios E2E PASS (`E2E_PUR02_RESULT=PASS`) sur instance jetable `pur02-e2e-runtime-20261110` ; 60/60 tests total (52 simulés + 8 LanceDB v4f) ; candidat actif : 3 composants (`candidate-purgeDocument-v4e.js` SHA `90a21b04…`, `candidate-documents.js` SHA `de9c5860…`, `candidate-lance-index-v4f.js` SHA `8103f042…`) ; suite canonique A v4f `pur02-candidate-v4f.test.js` SHA `773fbe04…` (scénarios 9/10 → `true`) ; ancienne suite A `pur02-candidate.test.js` SHA `f3e88f13…` OBSOLÈTE ; L-1 confirmée empiriquement par E2E-04 ; fix#1b ≠ LanceDB v4f (distincts et indépendants) ; section 14.12 (statut PUR-02-E final), 14.13 (PUR-02 → 60/60 + 4 E2E), 14.15 (mise à jour 2026-11-10/11), 14.22 (E2E, candidats actifs, suites canoniques, statut global VALIDÉ) mis à jour. Lab détruit. Production inchangée. **Non déployé.** Base : v0.9 (8 nov 2026).*
+*Sources : notes de passation ChatGPT (9, 11, 12 oct 2026) + conversations Claude oct 2026 + audit AnythingLLM oct 2026 + dossiers ChatGPT 23 oct 2026 + Plan-correctifs v0.4 (24 oct 2026) + passation ChatGPT du 25 oct 2026 + conclusions validées du 25 oct 2026 (21:37) + relecture du code amont par Claude le 25 oct 2026 (tag v1.17.0 et commit a5bb8b9) + Phase 0 OPS-02 (19 nov 2026)*
+*Version 1.0 — 19 novembre 2026*
+*Changements v1.0 : Phase 0 OPS-02 / ALLM-10 (19 nov 2026) — §5.2 : ajout conteneurs `anythingllm-fixlab` (arrêté, non utilisable), `anythingllm-cp3-test` (created, ne pas démarrer), `anythingllm-ops02-lab` (non créé) et note 7 volumes anonymes ; §5.3 : ajout volume `anythingllm-ops02-lab` (non créé) ; §7.1 : configuration de production vérifiée [PROD-19nov] (variables non sensibles + présence secrets). Source [PROD-19nov] introduite. Aucune ressource de laboratoire créée. Base : v0.9 (8 nov 2026).*
+*Version 0.9 — 8 novembre 2026*
 *Changements v0.9 : mise à jour PUR-02 v4e + fix#1b (52/52 tests PASS, 22A+16B+14C, patch SHA `86043b31…`, contre-revue indépendante) manquant depuis v0.8 ; ajout compagnon LanceDB v4f (`candidate-lance-index-v4f.js`, SHA `8103f042…`, 8/8 PASS [LAB], L-01..L-05 + R-01..R-03) ; 5 corrections test v4f (UUID déterministes, spy R-02 conservant l'exécution réelle, vérification même docId) ; test SHA final `11d835b2…` ; section 14.12 (statut v4e+fix#1b + v4f), 14.13 (matrice PUR-01, PUR-02), 14.15 (mises à jour 2026-11-05 et 2026-11-08), 14.22 (v4e+fix#1b, v4f) mis à jour. PUR-02-E non déployé — essai isolé requis. Base : v0.8 (1er nov 2026).*
 *Changements v0.8 : intégration de la validation PUR-02 v4 (9/9 tests d'intégration + 17/17 unitaires, consolidation v3 22/22) ; nouvelle section 14.22 (PUR-02 v4) ; section 7.4 mise à jour ; section 14.12 mise à jour (statut ALLM-16) ; matrice 14.13 mise à jour (PUR-01, PUR-02) ; section 14.15 mise à jour (milestone 2026-11-01). Non déployé — essai isolé requis. Base : v0.7 (28 oct 2026).*
 *Changements v0.7 : intégration du bilan ChatGPT du 28/10/2026 (étiquettes [PROD] et [LAB] ; ALLM-10 activé en production le 27/10, test unitaire seulement ; configuration `compose.yaml` ; états partiels dans la matrice ; correctifs de laboratoire INT-18 et INT-20/PUR-02 non validés ni déployés ; nouvelle section 14.21 ; items 6, 25, 29, 30 de la section 13 ; 15.4 mis à jour). Base : v0.6 (25 oct 2026).*
