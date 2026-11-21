@@ -1,6 +1,6 @@
 # Journal des Incidents — Serveur IA Mac mini + Synology
 
-*Version 1.3 — 8 novembre 2026*
+*Version 1.4 — 19 novembre 2026*
 
 Format de chaque entrée :
 - **Symptôme** : ce qui a été observé
@@ -9,7 +9,7 @@ Format de chaque entrée :
 - **Test de validation**
 - **Précautions pour la prochaine fois**
 
-## Lecture de cette version (1.3)
+## Lecture de cette version (1.4)
 
 **Sources de preuve (légende utilisée dans ce document) :**
 - **[C17]** code amont, tag `v1.17.0` (commit `fa7ec877f005a21ede94888b3b8618b700343857`), relu en lecture seule le 25/10/2026.
@@ -1398,7 +1398,7 @@ Fichiers locaux, à publier manuellement par Florian après relecture (GIT-01 no
 
 **Date :** 16–19 novembre 2026
 **Type :** entrée de mission
-**Statut :** ✅ Protocole v5 finalisé et publié sur `main` par Florian. Phase 0 exécutée en lecture seule. Architecture du laboratoire validée. Commandes de création autorisées (non exécutées). **Non publiés sur GitHub** : mises à jour documentaires de cette entrée (autorisation de Florian requise ; GIT-01).
+**Statut :** ✅ Protocole v5 finalisé et publié sur `main` par Florian. Phase 0 exécutée en lecture seule. Architecture du laboratoire validée. Création du volume et du conteneur arrêté autorisée (non exécutée). Documents v1.4 / v0.9 / v1.0 publiés sur `main` par Florian (SHA ci-dessous).
 
 **Contexte :** OPS-02 / ALLM-10 — préparation du test HTTP des trois routes de suppression de workspace. Protocole produit en 5 versions (v1 → v5) en sessions croisées Claude + ChatGPT. Phase 0 = inventaire Docker en lecture seule sur minimac.
 
@@ -1411,7 +1411,11 @@ Fichiers locaux, à publier manuellement par Florian après relecture (GIT-01 no
 
 **Non fait :** aucune ressource de laboratoire créée (ni volume, ni conteneur) ; aucun test exécuté ; aucune modification de la production.
 
-**Documents :** `OPS-02-ALLM-10-protocole-laboratoire-v5-20261116.md` publié sur `main` (par Florian). `Journal-des-Incidents.md` v1.4, `Plan-correctifs-AnythingLLM.md` v0.9, `Livret-Technique-Serveur-IA.md` v1.0 mis à jour localement (non publiés — autorisation requise).
+**Documents publiés sur `main` par Florian (19 novembre 2026) :**
+- `OPS-02-ALLM-10-protocole-laboratoire-v5-20261116.md` (protocole de référence)
+- `Journal-des-Incidents.md` v1.4 — SHA `e469d0440bedb741366b369ac32e6057bc10493c`
+- `Plan-correctifs-AnythingLLM.md` v0.9 — SHA `1e54be2381e1e8b3f1e8a5a141df67c65b15ddac`
+- `Livret-Technique-Serveur-IA.md` v1.0 — SHA `7862a67d903d4918f07716b80a5b849a41883532`
 
 ---
 

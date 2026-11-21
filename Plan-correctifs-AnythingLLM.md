@@ -210,7 +210,7 @@ Option 1 retenue : mode multi-utilisateur activé dans le laboratoire (T-07 exé
 | NAS | Aucun montage |
 | Secrets | Dédiés et indépendants de la production |
 | Redémarrage auto | Non |
-| Accès initial à Ollama | Aucun (`LLM_PROVIDER=ollama`, erreurs de connexion acceptées en logs) |
+| Accès initial à Ollama | **Aucun accès.** `LLM_PROVIDER=ollama` conservé (valeur de production), mais aucune route vers `http://host.docker.internal:11434` ne sera fournie au laboratoire. Les routes testées (DELETE) n'invoquent pas le LLM. Des erreurs de connexion peuvent apparaître dans les logs ; elles n'autorisent pas l'accès à Ollama sur le Mac. |
 | `WORKSPACE_DELETION_PROTECTION` | `true` initialement |
 | Mode utilisateur | Multi-utilisateur (via interface officielle) |
 | Compte de test | Administrateur dédié |
@@ -711,7 +711,7 @@ ports LAN existantes.
 | D1 | ALLM-12 : CP-3 non appliqué automatiquement ; analyse des conséquences puis décision | Révisée le 25/10 (remplace « retenue sous conditions ») | Options A/B/C ; SEC-01 et SEC-10 en laboratoire ; décision et autorisation de Florian |
 | D2 | Passerelle dédiée, Option A, liste blanche | Retenue ; reconfirmée [VAL] le 25/10 | Spécifier et tester allowlist/refus avant n8n (SEC-07 à SEC-09) |
 | D3 | Usage de `Import-Corpus-IA` | À vérifier ; ne pas révoquer avant inventaire | Examiner logs et workflows sans afficher la clé |
-| D4 | `WORKSPACE_DELETION_PROTECTION` | **Activée** en production le 27/10/2026 [PROD] ; test unitaire seulement ; Phase 0 complète [PROD-19nov] ; architecture laboratoire validée (option 1 : multi-utilisateur) ; **laboratoire non encore créé** | Créer le laboratoire (après autorisation) → démarrer → activer mode multi-utilisateur → exécuter OPS-02 Phase 1 à 4 |
+| D4 | `WORKSPACE_DELETION_PROTECTION` | **Activée** en production le 27/10/2026 [PROD] ; test unitaire seulement ; Phase 0 complète [PROD-19nov] ; architecture laboratoire validée (option 1 : multi-utilisateur) ; **laboratoire non encore créé** | **Autorisé :** création du volume `anythingllm-ops02-lab` et du conteneur à l'état arrêté. **Pas encore autorisé :** démarrage du laboratoire ; activation du mode multi-utilisateur ; exécution des tests OPS-02. Chaque étape requiert une validation distincte de Florian. |
 | D5 | DOS-02 | Corrigé et déployé (preuve statique [IMG]) | DOS-01 et DOS-02 en laboratoire |
 | D6 | INT-17 à INT-20, UPLOAD-02, RACE-01 | PUR-02 : candidat v4e + fix#1b, 52/52 PASS [LAB], prêt pour essai isolé, non déployé (05/11/2026). Compagnon v4f : `candidate-lance-index-v4f.js`, 8/8 PASS, non déployé (08/11/2026). INT-18 : corrigé en laboratoire (mocks), non déployé ; autres inchangés | PUR-02 : essai isolé requis avant tout déploiement ; INT-18 et autres : tests de bout en bout et contrôle d'intégrité avant toute décision |
 | D7 | ALLM-06 / ALLM-15 | Ouvert [VAL] | Revue des tests amont, RAG-03A/B |
