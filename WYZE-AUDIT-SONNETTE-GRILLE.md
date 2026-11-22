@@ -3,12 +3,11 @@
 Document de référence technique — Projet d'archivage local des événements vidéo Wyze.
 
 - **Statut global :** audit exploratoire en cours ; moteur MP4 validé sur médias synthétiques ; récupération d'un véritable clip Wyze non encore démontrée.
-- **Dernière mise à jour :** 22 novembre 2026.
+- **Dernière mise à jour :** 22 novembre 2026 — consolidation de l'audit statique Optimyze.
 - **NAS cible :** Synology SERVOR — DSM 7.4.1-90080 — x86_64.
 - **Caméra pilote :** Wyze Video Doorbell Pro — « Sonnette Grille ».
 - **Modèle :** GW_BE1.
-- **Firmware observé :** 1.0.73.
-- **Hardware observé :** 1.0.1.
+- **Firmware et hardware :** valeurs précédemment relevées dans l'inventaire Wyze ; leur preuve brute expurgée n'est pas reproduite dans ce document.
 
 ---
 
@@ -210,7 +209,7 @@ https://github.com/noelportugal/wyze-node
 
 Version étudiée : 2.12.2.
 
-Commit téléchargé : `d556f1b`.
+Référence de commit consignée lors du téléchargement : `d556f1b`.
 
 Le code a été téléchargé et inspecté sans installation du paquet ni exécution.
 
@@ -248,9 +247,21 @@ Version examinée : 0.5.1.
 
 Archive CRX téléchargée depuis le service de distribution Chrome.
 
-SHA-256 :
+SHA-256 du CRX :
 
 `fd67487dd0f1c6fedf7db53e45a854656fa3b9c32eb6bccb67ec0da33a57438e`
+
+Fichier JavaScript source analysé :
+
+`/tmp/wyze-audit.hiRZRx/optimyze/extracted/src/content.js`
+
+Taille : 69 902 octets.
+
+SHA-256 de `content.js` :
+
+`ed6210d52a85cbe161581e54c09f574068462360f10efaefa43bf42aa4eb91e1`
+
+Ces deux empreintes identifient précisément l'archive et le fichier JavaScript utilisés pour les constats de cette section.
 
 L'extension a été extraite et inspectée statiquement.
 
@@ -306,6 +317,8 @@ Optimyze semble observer les requêtes de lecture déjà effectuées par Wyze We
 
 Cette découverte constitue une piste technique importante pour le projet.
 
+Elle ne démontre pas que les mêmes ressources peuvent être récupérées depuis un NAS sans session de navigateur.
+
 #### 4.3.4 Extraction et validation du moteur MP4
 
 Le moteur de reconstruction MP4 a été extrait de `content.js` à des fins de test isolé.
@@ -319,7 +332,9 @@ Ne jamais identifier une fonction par son seul nom ni retenir automatiquement sa
 Il faut :
 1. rechercher toutes les déclarations portant ce nom ;
 2. comparer leurs positions et signatures ;
-3. confirmer le rôle de la fonction à partir de ses appels et de son contexte.
+3. confirmer le rôle de la fonction à partir de ses appels et de son contexte ;
+4. tenir compte des fonctions locales et des portées lexicales ;
+5. conserver le SHA-256 du fichier source utilisé.
 
 Des noms de fonctions minifiées sont réutilisés dans `content.js`. Une extraction fondée uniquement sur la première occurrence conduirait à sélectionner une fonction incorrecte.
 
@@ -501,50 +516,206 @@ Le moteur corrigé reste donc un candidat expérimental.
 
 Aucune installation ou connexion de compte Wyze via Optimyze n'est autorisée.
 
-#### 4.3.4.10 Pièges liés aux fonctions homonymes dans le JavaScript minifié
+##### 4.3.4.10 Pièges liés aux fonctions homonymes dans le JavaScript minifié
 
-L'analyse de `content.js` a révélé un piège important : plusieurs fonctions distinctes peuvent porter exactement le même nom dans le fichier minifié.
+L'analyse de `content.js` a révélé plusieurs noms de fonctions déclarés plusieurs fois.
 
-Une recherche textuelle simple sur un nom de fonction ne permet donc pas d'identifier avec certitude la fonction recherchée.
+Ce phénomène est particulièrement piégeux dans un fichier minifié : les identifiants courts sont réutilisés pour réduire la taille du code.
 
-Deux collisions ont notamment été constatées :
+**Une recherche textuelle sur un nom ne suffit donc pas à identifier une fonction.**
 
-**Collision n° 1 : `function g()`**
+Il faut distinguer :
+- les déclarations de fonctions nommées ;
+- les appels à une fonction ;
+- les fonctions fléchées et expressions de fonctions ;
+- les identifiants locaux réutilisés dans des fonctions différentes ;
+- les portées lexicales dans lesquelles ces identifiants sont définis.
 
-Deux déclarations distinctes de `function g()` ont été identifiées :
+Les offsets ci-dessous sont des positions en octets, calculées dans le fichier `content.js` identifié par le SHA-256 :
 
-- La première concerne le traitement et le nettoyage des noms de fichiers.
-- La seconde intervient dans la construction des boîtes MP4 et participe à la création de la structure `moov`, notamment des pistes `trak`, des en-têtes `tkhd` et des boîtes `mdia`.
+`ed6210d52a85cbe161581e54c09f574068462360f10efaefa43bf42aa4eb91e1`
 
-C'est la seconde fonction qui est pertinente pour l'analyse du moteur de reconstruction MP4.
+Taille : 69 902 octets.
 
-Retenir la première occurrence aurait conduit à extraire une fonction sans rapport avec la construction du conteneur vidéo.
+Le fichier est minifié sur une seule ligne. Les offsets en octets sont donc plus utiles que des numéros de ligne.
 
-**Collision n° 2 : `function u()`**
+**A. Les deux déclarations `function g()`**
 
-Deux déclarations distinctes de `function u()` ont également été identifiées :
+| Offset | Signature | Fonction |
+|---:|---|---|
+| 2327 | `function g(e,t)` | Application d'un modèle de nom de fichier |
+| 8441 | `function g(e,t,n)` | Construction de la boîte MP4 `moov` |
 
-- La première concerne un mécanisme de stockage.
-- La seconde analyse les données d'initialisation MP4 et extrait les métadonnées nécessaires à la reconstruction des pistes.
+Première déclaration, offset 2327 :
 
-C'est la seconde fonction qui est pertinente pour comprendre le traitement des fragments d'initialisation DASH.
+`function g(e,t)`
 
-Elle retourne notamment les informations relatives à l'identifiant de piste, au type de média, aux dimensions vidéo, aux échelles de temps, aux descriptions d'échantillons et aux paramètres par défaut.
+Cette fonction :
+- remplace les variables d'un modèle de nom de fichier ;
+- nettoie les valeurs insérées ;
+- normalise les séparateurs et les espaces ;
+- est exposée dans l'objet retourné sous le nom `applyPattern` ;
+- est utilisée par `buildFilename`.
 
-Elle a également joué un rôle central dans l'identification du problème de conservation des edit lists `edts/elst`.
+L'appel identifié dans le contexte de `buildFilename` apparaît à l'offset 3102.
 
-**Méthode obligatoire pour toute extraction ultérieure**
+Deuxième déclaration, offset 8441 :
+
+`function g(e,t,n)`
+
+Cette fonction appartient au moteur MP4.
+
+Elle :
+- construit la boîte `moov` ;
+- calcule les durées des pistes ;
+- construit notamment les métadonnées `mvhd` ;
+- construit les structures `trak`, dont `tkhd` et `mdia`.
+
+Les appels identifiés dans le constructeur MP4 apparaissent aux offsets 12713 et 12822.
+
+Il s'agit de deux fonctions de responsabilités totalement différentes.
+
+Retenir la première occurrence de `function g` aurait conduit à extraire une fonction de nommage de fichiers à la place du constructeur MP4.
+
+**B. Les deux déclarations `function u()`**
+
+| Offset | Signature | Fonction |
+|---:|---|---|
+| 1474 | `function u(e,t,n)` | Enveloppe d'opération asynchrone de stockage |
+| 5036 | `function u(e)` | Analyseur du fragment d'initialisation MP4 |
+
+Première déclaration, offset 1474 :
+
+`function u(e,t,n)`
+
+Cette fonction :
+- enveloppe une opération asynchrone sur une API de stockage ;
+- appelle une méthode telle que `get` ou `set` ;
+- gère le callback et, le cas échéant, la Promise retournée ;
+- est utilisée par la gestion de l'historique des événements téléchargés ;
+- est également utilisée pour les paramètres sonores.
+
+Appels identifiés dans les contextes examinés :
+- offset 1652 : lecture de l'historique ;
+- offset 1914 : écriture de l'historique ;
+- offset 1957 : opération de stockage dans la méthode `clear` ;
+- offset 2896 : lecture des paramètres sonores ;
+- offset 3014 : écriture des paramètres sonores.
+
+Deuxième déclaration, offset 5036 :
+
+`function u(e)`
+
+Cette fonction appartient au moteur MP4.
+
+Elle :
+- recherche la boîte `moov` ;
+- analyse `mvhd` ;
+- recherche `trak`, `tkhd` et `mdia` ;
+- analyse les informations de piste et les descriptions d'échantillons ;
+- extrait notamment l'identifiant de piste, le type de média, les dimensions, les échelles de temps et les paramètres nécessaires à la reconstruction.
+
+Appels identifiés dans les contextes examinés :
+- offset 11682 ;
+- offset 13498 ;
+- offset 13777.
+
+Cette fonction est le parseur d'initialisation utilisé par le moteur MP4.
+
+Elle a joué un rôle central dans l'analyse du problème de conservation des edit lists `edts/elst`.
+
+**C. Inventaire des dix noms répétés**
+
+Le relevé des déclarations nommées a trouvé 79 déclarations au total et dix noms déclarés plusieurs fois.
+
+| Nom | Nombre de déclarations | Offsets en octets |
+|---|---:|---|
+| `a` | 3 | 691, 3653, 14800 |
+| `c` | 2 | 1309, 4863 |
+| `g` | 2 | 2327, 8441 |
+| `h` | 2 | 8225, 20257 |
+| `l` | 2 | 1095, 4634 |
+| `m` | 2 | 6723, 20121 |
+| `n` | 3 | 3239, 14480, 17780 |
+| `o` | 3 | 3305, 14601, 19756 |
+| `p` | 3 | 2114, 6979, 20181 |
+| `u` | 2 | 1474, 5036 |
+
+Les signatures et les rôles identifiés à partir des extraits sont les suivants.
+
+| Nom | Offset | Signature | Rôle identifié |
+|---|---:|---|---|
+| `a` | 691 | `a(e)` | Sélectionne le modèle de nom de fichier selon le format configuré |
+| `a` | 3653 | `a(e,t,n,o)` | Recherche une boîte MP4 d'un type donné dans une plage |
+| `a` | 14800 | `a(e,n)` | Construit une configuration audio AAC de type AudioSpecificConfig |
+| `c` | 1309 | `c(e)` | Enveloppe une opération d'écriture dans le stockage |
+| `c` | 4863 | `c(e,t,n,...o)` | Construit une boîte MP4 avec version, flags et contenu |
+| `g` | 2327 | `g(e,t)` | Applique un modèle de nom de fichier |
+| `g` | 8441 | `g(e,t,n)` | Construit la boîte MP4 `moov` |
+| `h` | 8225 | `h(e)` | Construit la table `stts` en regroupant les durées d'échantillons identiques |
+| `h` | 20257 | `h()` | Recherche la carte Wyze située sous le pointeur dans l'interface |
+| `l` | 1095 | `l()` | Lit les paramètres depuis le stockage |
+| `l` | 4634 | `l(e,...t)` | Sérialise une boîte MP4 et ses données |
+| `m` | 6723 | `m(e,t)` | Analyse un fragment média MP4 et ses échantillons |
+| `m` | 20121 | `m()` | Suit la carte Wyze actuellement ciblée dans l'interface |
+| `n` | 3239 | `n(e,t)` | Lit une valeur entière 64 bits à partir d'une DataView |
+| `n` | 14480 | `n(e)` | Décode une valeur audio G.711 μ-law |
+| `n` | 17780 | `n(e)` | Calcule un CRC32 |
+| `o` | 3305 | `o(e,t)` | Lit un identifiant de boîte MP4 sur quatre caractères |
+| `o` | 14601 | `o(e)` | Décode une valeur audio G.711 A-law |
+| `o` | 19756 | `o(...e)` | Journalisation conditionnelle des messages Optimyze |
+| `p` | 2114 | `p(e)` | Nettoie et normalise un nom de fichier |
+| `p` | 6979 | `p(e,o,i,s)` | Analyse les échantillons d'un fragment MP4 |
+| `p` | 20181 | `p(e)` | Détermine si une autre carte Wyze est récemment ciblée |
+
+Cet inventaire est fondé sur les signatures et les extraits de corps examinés. Il ne signifie pas que les dix groupes représentent dix collisions de portée globale.
+
+En particulier, la réutilisation d'un identifiant minifié dans deux fonctions ou deux fermetures ne signifie pas nécessairement que l'une écrase l'autre. Il faut déterminer la portée de chaque déclaration avant de parler de collision effective à l'exécution.
+
+**D. Distinction entre déclarations et appels**
+
+Un premier relevé a cherché les déclarations à partir de `function`, puis les occurrences d'appel à partir du nom lui-même.
+
+Cette méthode avait un défaut : les offsets ne commençaient pas au même caractère.
+
+Par exemple :
+- déclaration de `g` : offset 2327 ;
+- occurrence de `g(` dans cette déclaration : offset 2336.
+
+La différence est de neuf octets, correspondant au préfixe `function `.
+
+La même différence existe pour les déclarations de `u`.
+
+Il ne faut donc pas comparer directement les offsets des deux recherches pour éliminer les déclarations.
+
+De plus, les occurrences syntaxiques d'un identifiant ne sont pas nécessairement des appels à la fonction étudiée.
+
+Le cas de `u` l'illustre particulièrement bien :
+- les appels du stockage utilisent la fonction `u(e,t,n)` de la première portée ;
+- les appels du moteur MP4 utilisent la fonction `u(e)` de la seconde portée ;
+- d'autres occurrences de `u()` sont des fonctions locales ou des identifiants de fonctions fléchées, notamment dans les modules audio et d'interface.
+
+Les occurrences à proximité des offsets 17258, 17299 et 17311 appartiennent notamment à un identifiant local utilisé pour écrire des données WAV. Elles ne doivent pas être attribuées au parseur MP4.
+
+Les occurrences autour des offsets 49072 et 49434 à 49453 sont également dans un contexte local de gestion de progression. Celles observées autour des offsets 61838 et 62857 appartiennent à l'interface.
+
+Il est donc incorrect de conclure qu'une fonction appelée `u` est systématiquement le parseur MP4.
+
+**E. Méthode obligatoire pour toute extraction ultérieure**
 
 Pour chaque fonction minifiée étudiée :
 
-1. Rechercher toutes les déclarations portant le nom concerné.
-2. Relever leurs positions exactes dans le fichier.
-3. Comparer leurs signatures et leurs corps.
-4. Examiner les fonctions qui les appellent.
-5. Vérifier les données consommées et les valeurs retournées.
-6. Confirmer le rôle à partir du contexte d'exécution statiquement identifiable.
-7. Extraire uniquement la déclaration dont le rôle a été démontré.
-8. Conserver une référence à la position et au SHA-256 du fichier source.
+1. Calculer et conserver le SHA-256 du fichier source.
+2. Rechercher toutes les déclarations portant le nom concerné.
+3. Relever leurs positions exactes en octets.
+4. Comparer leurs signatures et leurs corps.
+5. Examiner les fonctions qui les appellent.
+6. Vérifier les données consommées et les valeurs retournées.
+7. Identifier les portées lexicales et les fonctions locales.
+8. Distinguer les appels effectifs des déclarations et des simples occurrences textuelles.
+9. Confirmer le rôle à partir du contexte statiquement identifiable.
+10. Extraire uniquement la déclaration dont le rôle a été démontré.
+11. Conserver une référence à la position et au SHA-256 du fichier source.
 
 Ne jamais se contenter de la première occurrence retournée par `grep`, une recherche textuelle ou un script d'extraction.
 
@@ -552,9 +723,9 @@ Ne jamais se contenter de la première occurrence retournée par `grep`, une rec
 
 L'extraction du moteur MP4 doit être considérée comme une opération d'analyse structurée, et non comme une simple copie de fonctions identifiées par leur nom.
 
-Cette précaution est particulièrement importante pour `g()` et `u()`, dont les occurrences ont des responsabilités totalement différentes.
+Les offsets et les signatures de ce document concernent exclusivement le `content.js` version 0.5.1 identifié par le SHA-256 indiqué ci-dessus.
 
-Toute nouvelle version de l'extension devra faire l'objet d'une nouvelle vérification des déclarations, de leurs positions, de leurs signatures et de leurs appels. Les noms et positions observés dans la version 0.5.1 ne doivent pas être supposés stables.
+Toute nouvelle version de l'extension devra faire l'objet d'une nouvelle vérification. Les noms et positions observés dans la version 0.5.1 ne doivent pas être supposés stables.
 
 ---
 
@@ -613,13 +784,15 @@ Caméra identifiée :
 | Nom | Sonnette Grille |
 | Modèle | GW_BE1 |
 | Identifiant Wyze | GW_BE1_7C78B2A71D53 |
-| Firmware | 1.0.73 |
-| Hardware | 1.0.1 |
+| Firmware | Valeur observée dans l'inventaire initial |
+| Hardware | Valeur observée dans l'inventaire initial |
 | Type | Camera |
 
 L'identifiant retourné par Wyze est conservé exactement comme fourni.
 
 **Identification de la caméra pilote : validée.**
+
+Les valeurs de firmware et de hardware devront être rattachées à une sortie source expurgée avant d'être considérées comme des preuves documentaires autonomes.
 
 ---
 
@@ -949,19 +1122,20 @@ Aucune modification de Homer n'est prévue pendant l'audit.
 | 3 | Comparer Axios et Node natif hors réseau | Identifier les différences de requête | À faire |
 | 4 | Étudier l'extraction indépendante du navigateur | Choisir une méthode | À faire |
 | 5 | Valider le moteur MP4 sur médias synthétiques | Reconstruction audio/vidéo fidèle | **Validé pour le cas synthétique testé** |
-| 6 | Tester le moteur sur fragments Wyze réels | Compatibilité avec les médias de la caméra | À faire |
-| 7 | Définir le modèle de sécurité | Architecture documentée | À faire |
-| 8 | Concevoir le prototype isolé | Prototype non productif | À faire |
-| 9 | Obtenir une ressource de lecture réelle et inspecter la réponse expurgée | URL et métadonnées comprises | À faire |
-| 10 | Demander confirmation avant le téléchargement réel | Autorisation explicite | À faire |
-| 11 | Télécharger un premier clip autorisé | Premier fichier récupéré | Non effectué |
-| 12 | Vérifier MP4, son et intégrité | Lecture validée | À faire |
-| 13 | Auditer le prototype | Risques identifiés et corrigés | À faire |
-| 14 | Soumettre le déploiement à validation | Autorisation préalable | À faire |
-| 15 | Installer le service sur SERVOR | Déploiement contrôlé | Non commencé |
-| 16 | Construire l'interface de consultation | Archives accessibles | À faire |
-| 17 | Réparer et diagnostiquer les Outdoor Cam | Éligibilité à l'intégration | En attente |
-| 18 | Intégrer chaque Outdoor Cam séparément | Extension progressive | Non commencé |
+| 6 | Documenter les fonctions homonymes de `content.js` | Extraction reproductible | **Inventaire et rôles principaux documentés ; portées complètes non formellement cartographiées** |
+| 7 | Tester le moteur sur fragments Wyze réels | Compatibilité avec les médias de la caméra | À faire |
+| 8 | Définir le modèle de sécurité | Architecture documentée | À faire |
+| 9 | Concevoir le prototype isolé | Prototype non productif | À faire |
+| 10 | Obtenir une ressource de lecture réelle et inspecter la réponse expurgée | URL et métadonnées comprises | À faire |
+| 11 | Demander confirmation avant le téléchargement réel | Autorisation explicite | À faire |
+| 12 | Télécharger un premier clip autorisé | Premier fichier récupéré | Non effectué |
+| 13 | Vérifier MP4, son et intégrité | Lecture validée | À faire |
+| 14 | Auditer le prototype | Risques identifiés et corrigés | À faire |
+| 15 | Soumettre le déploiement à validation | Autorisation préalable | À faire |
+| 16 | Installer le service sur SERVOR | Déploiement contrôlé | Non commencé |
+| 17 | Construire l'interface de consultation | Archives accessibles | À faire |
+| 18 | Réparer et diagnostiquer les Outdoor Cam | Éligibilité à l'intégration | En attente |
+| 19 | Intégrer chaque Outdoor Cam séparément | Extension progressive | Non commencé |
 
 Aucune étape ne doit être considérée comme validée sans résultat expérimental.
 
@@ -973,13 +1147,13 @@ La validation synthétique du moteur MP4 ne remplace pas le test d'un véritable
 
 ### 22 novembre 2026 — Authentification et identification
 
-1. Téléchargement et inspection statique de wyze-node 2.12.2, commit `d556f1b`.
+1. Téléchargement et inspection statique de wyze-node 2.12.2, commit référencé `d556f1b`.
 2. Identification des méthodes d'authentification et de lecture des événements.
 3. Décision de ne pas utiliser la bibliothèque telle quelle en raison du stockage des jetons en clair.
 4. Création d'une clé API Wyze personnelle et stockage local protégé.
 5. Authentification réelle auprès de Wyze : HTTP 200, jetons obtenus.
 6. Interrogation de `get_object_list` : HTTP 200.
-7. Identification de la Sonnette Grille : GW_BE1, firmware 1.0.73.
+7. Identification de la Sonnette Grille : GW_BE1.
 8. Aucun conteneur ni changement de production.
 
 ### 22 novembre 2026 — Événements et ressources vidéo
@@ -1040,23 +1214,42 @@ Décisions complémentaires :
 19. Aucune vidéo Wyze réelle utilisée ; aucune requête réseau Wyze effectuée pendant cette validation.
 20. Aucune installation, modification de production ou modification de configuration SERVOR.
 
+### 22 novembre 2026 — Relevé reproductible de content.js et fonctions homonymes
+
+1. Localisation du fichier source original dans `/tmp/wyze-audit.hiRZRx/optimyze/extracted/src/content.js`.
+2. Vérification de sa taille : 69 902 octets.
+3. Calcul du SHA-256 : `ed6210d52a85cbe161581e54c09f574068462360f10efaefa43bf42aa4eb91e1`.
+4. Confirmation du SHA-256 du CRX : `fd67487dd0f1c6fedf7db53e45a854656fa3b9c32eb6bccb67ec0da33a57438e`.
+5. Relevé de 79 déclarations de fonctions nommées.
+6. Identification de dix noms déclarés plusieurs fois : `a`, `c`, `g`, `h`, `l`, `m`, `n`, `o`, `p` et `u`.
+7. Confirmation des deux déclarations `g()` aux offsets 2327 et 8441.
+8. Identification de la première comme fonction de nommage de fichiers et de la seconde comme constructeur de la boîte MP4 `moov`.
+9. Confirmation des deux déclarations `u()` aux offsets 1474 et 5036.
+10. Identification de la première comme enveloppe d'opération de stockage asynchrone et de la seconde comme parseur du fragment d'initialisation MP4.
+11. Relevé des contextes d'appel de ces fonctions.
+12. Mise en évidence de la nécessité de distinguer les déclarations, les appels et les identifiants locaux réutilisés.
+13. Correction de la méthode de comptage des occurrences : les offsets des déclarations et des occurrences de nom ne commençaient pas au même caractère.
+14. Extension de l'inventaire aux huit autres noms répétés, avec offsets, signatures et rôles identifiés à partir des extraits.
+15. Conclusion : l'identification d'une fonction minifiée doit être faite par signature, corps, contexte, appels et portée lexicale, jamais par son seul nom.
+
 ---
 
 ## 13. Point de reprise
 
-**Prochaine tâche : préparer le premier essai avec un véritable événement de la Sonnette Grille, après mise à jour du présent document.**
+**Prochaine tâche : préparer le premier essai avec un véritable événement de la Sonnette Grille, après validation de la version consolidée du présent document.**
 
 Priorités :
 
 1. Conserver les fichiers du laboratoire MP4, les deux moteurs et leurs empreintes SHA-256.
 2. Poursuivre l'analyse statique d'Optimyze et vérifier les fonctions restantes de récupération des fragments.
-3. Comparer hors réseau les requêtes Axios de wyze-node avec le script Node natif.
-4. Déterminer comment obtenir les ressources de lecture DASH réellement utilisées par Wyze Web View.
-5. Préparer l'inspection expurgée d'une ressource réelle, sans afficher d'URL signée ni de jeton.
-6. Vérifier que les fragments réels sont compatibles avec le parseur et le moteur MP4 corrigé.
-7. Demander une confirmation explicite avant tout téléchargement effectif du clip.
-8. Après téléchargement autorisé, vérifier le conteneur, les pistes, le son, la durée et l'intégrité du fichier.
-9. Définir ensuite l'architecture du prototype isolé.
+3. Si nécessaire, approfondir la cartographie des portées lexicales des dix groupes de fonctions homonymes.
+4. Comparer hors réseau les requêtes Axios de wyze-node avec le script Node natif.
+5. Déterminer comment obtenir les ressources de lecture DASH réellement utilisées par Wyze Web View.
+6. Préparer l'inspection expurgée d'une ressource réelle, sans afficher d'URL signée ni de jeton.
+7. Vérifier que les fragments réels sont compatibles avec le parseur et le moteur MP4 corrigé.
+8. Demander une confirmation explicite avant tout téléchargement effectif du clip.
+9. Après téléchargement autorisé, vérifier le conteneur, les pistes, le son, la durée et l'intégrité du fichier.
+10. Définir ensuite l'architecture du prototype isolé.
 
 Ne pas :
 - installer Optimyze ;
@@ -1099,6 +1292,9 @@ Ce fichier est le référentiel cumulatif du projet Wyze.
 | Identification des ressources KVS | Validée |
 | Endpoint Replay | HTTP 500, cause inconnue |
 | Analyse statique d'Optimyze | Première phase réalisée |
+| Empreinte et identification du content.js | Validées |
+| Inventaire des fonctions homonymes | Réalisé pour les déclarations nommées |
+| Cartographie exhaustive des portées lexicales | Non réalisée |
 | Extraction du moteur MP4 | Réalisée |
 | Reconstruction MP4 synthétique | Validée pour le cas testé |
 | Préservation des edit lists simples | Validée pour le cas testé |
