@@ -3,11 +3,11 @@
 Document de référence technique — Projet d'archivage local des événements vidéo Wyze.
 
 - **Statut global :** audit exploratoire en cours ; moteur MP4 validé sur médias synthétiques ; récupération d'un véritable clip Wyze non encore démontrée.
-- **Dernière mise à jour :** 22 novembre 2026 — consolidation de l'audit statique Optimyze.
+- **Dernière mise à jour proposée :** 22 novembre 2026 — approfondissement de l'analyse statique d'Optimyze.
 - **NAS cible :** Synology SERVOR — DSM 7.4.1-90080 — x86_64.
 - **Caméra pilote :** Wyze Video Doorbell Pro — « Sonnette Grille ».
 - **Modèle :** GW_BE1.
-- **Firmware et hardware :** valeurs précédemment relevées dans l'inventaire Wyze ; leur preuve brute expurgée n'est pas reproduite dans ce document.
+- **Firmware et hardware :** valeurs précédemment relevées dans l'inventaire Wyze ; leur preuve brute expurgée n'est pas reproduite dans ce document. Elles restent à rattacher à une source vérifiable avant d'être considérées comme des preuves documentaires autonomes.
 
 ---
 
@@ -261,7 +261,17 @@ SHA-256 de `content.js` :
 
 `ed6210d52a85cbe161581e54c09f574068462360f10efaefa43bf42aa4eb91e1`
 
-Ces deux empreintes identifient précisément l'archive et le fichier JavaScript utilisés pour les constats de cette section.
+Second fichier JavaScript analysé :
+
+`/tmp/wyze-audit.hiRZRx/optimyze/extracted/src/inject.js`
+
+Taille : 1 109 octets.
+
+SHA-256 de `inject.js` :
+
+`e86d804af5453d215ddc54bac78f3db7db16522dc6743dc8c68c0fb13a3cb50e`
+
+Ces empreintes identifient précisément l'archive et les deux fichiers JavaScript utilisés pour les constats de cette section.
 
 L'extension a été extraite et inspectée statiquement.
 
@@ -286,7 +296,7 @@ Le fichier intercepte :
 
 Les fonctions natives sont conservées et les appels originaux continuent d'être exécutés.
 
-Le script filtre les URL correspondant à :
+Le script filtre les URL correspondant aux routes DASH suivantes :
 
 - `/dash/vN/.../getMP4InitFragment`
 - `/dash/vN/.../getMP4MediaFragment`
@@ -295,7 +305,20 @@ Le script filtre les URL correspondant à :
 
 Les URL détectées sont communiquées à `content.js` par `window.postMessage`, avec le marqueur `__wyzeDownloader: "url"`.
 
-Le script peut également demander au lecteur vidéo sa source actuelle via `currentSrc()` et transmettre cette information avec le marqueur `__wyzeDownloader: "src"`.
+Le script peut également répondre à une demande `ask-src` en recherchant l'élément DOM associé et en lisant `player.currentSrc()` lorsque cette méthode est disponible.
+
+La réponse est transmise avec le marqueur `__wyzeDownloader: "src"`.
+
+**Détail de la communication entre contextes :**
+
+- Le script tente d'abord d'envoyer les messages à `window.location.origin`.
+- Si cet envoi échoue, il prévoit un repli vers `window.postMessage(..., "*")`.
+- Le listener vérifie que `event.source === window`.
+- Le code examiné ne permet pas, à lui seul, de conclure à une validation complète de l'origine et du contenu de chaque message dans l'ensemble du dispositif.
+
+Cette observation doit être prise en compte dans l'analyse de sécurité de la frontière entre le monde MAIN et le monde isolé. Elle ne démontre pas qu'une exploitation est possible.
+
+Le fichier `inject.js` ne constitue pas un téléchargeur autonome : il observe les requêtes effectuées par la page et transmet les URL reconnues à l'autre contexte.
 
 #### 4.3.3 Analyse statique de content.js
 
@@ -503,20 +526,208 @@ Elle ne démontre pas encore :
 
 Le moteur corrigé reste donc un candidat expérimental.
 
-##### 4.3.4.9 Ce qui reste à démontrer pour Optimyze
+##### 4.3.4.9 Analyse détaillée de la récupération DASH et des credentials
 
-- Le détail complet du mécanisme de récupération des fragments.
-- La gestion des cookies et des credentials.
+Cette sous-section complète l'analyse précédente à partir des déclarations et extraits identifiés dans le `content.js` version 0.5.1.
+
+Les offsets sont des positions en octets dans le fichier source de 69 902 octets identifié par le SHA-256 :
+
+`ed6210d52a85cbe161581e54c09f574068462360f10efaefa43bf42aa4eb91e1`
+
+Aucun code n'a été exécuté pour produire ces constats.
+
+**A. État de session construit par `y()`**
+
+À l'offset 20607, le code contient une fonction fléchée :
+
+`const y=()=>({manifestUrl:null,mediaTemplate:null,initTemplate:null,tracks:new Set})`
+
+Elle construit un objet d'état initial comprenant :
+- `manifestUrl` ;
+- `mediaTemplate` ;
+- `initTemplate` ;
+- `tracks`, initialisé sous forme de `Set`.
+
+Cet objet constitue un enregistrement de suivi des informations nécessaires à la récupération et à l'assemblage des fragments DASH.
+
+L'offset 20607 correspond à l'initialisation de cet état. Une autre occurrence de `manifestUrl` apparaît à l'offset 23401 dans le traitement d'un message associé à la source du lecteur.
+
+Le code observé adopte ou corrige alors l'URL du manifeste à partir de la source du lecteur, puis réinitialise les informations de templates et de pistes lorsque cet état doit être actualisé.
+
+L'association des informations au lecteur et à la carte événement dépend également de la logique de suivi de la carte survolée. Une fenêtre temporelle de 2500 ms intervient dans la détection d'un changement récent de carte.
+
+**Interprétation :** les URL et modèles de fragments ne sont pas présentés comme des constantes globales indépendantes. Ils sont associés à un état de lecture construit et actualisé dans le contexte de l'interface Wyze.
+
+Cela renforce la dépendance fonctionnelle à l'observation du lecteur et de ses requêtes.
+
+Cela ne prouve toutefois pas qu'une URL capturée ne puisse jamais être réutilisée hors du navigateur. Cette possibilité reste à tester séparément.
+
+**B. Reconstruction d'une URL de fragment par `D()`**
+
+À l'offset 23714 :
+
+`function D(e,t,n,o)`
+
+Cette fonction reconstruit une URL de fragment à partir des modèles observés.
+
+Son comportement visible est le suivant :
+
+1. Pour un fragment de type `init`, elle privilégie `initTemplate`, avec repli sur `mediaTemplate`.
+2. Pour un fragment de type média, elle privilégie `mediaTemplate`, avec repli sur `initTemplate`.
+3. Si aucun modèle n'est disponible, elle lève `Error("No fragment URL has been observed yet")`.
+4. Elle construit un objet `URL` à partir du modèle retenu.
+5. Elle remplace le dernier composant du chemin par `getMP4InitFragment.mp4` ou `getMP4MediaFragment.mp4`, selon le type demandé.
+6. Elle ajoute `TrackNumber` lorsque le numéro de piste est fourni.
+7. Elle ajoute `SequenceNumber` lorsque le numéro de séquence est fourni, ou supprime ce paramètre lorsqu'il ne l'est pas.
+8. Elle restitue l'URL en restaurant la notation `$Number$` lorsque celle-ci avait été encodée sous la forme `%24Number%24`.
+
+Le code démontre donc la reconstruction d'une URL à partir d'un modèle observé dans le contexte du lecteur.
+
+Il ne démontre pas que cette URL reste valide après expiration de la session, ni qu'elle puisse être utilisée depuis le NAS avec les mêmes droits.
+
+**C. Récupération HTTP par `L()`**
+
+Déclaration identifiée à l'offset 23938 :
+
+`async function L(e,n=0,o=t,r=null)`
+
+La fonction effectue notamment :
+
+`fetch(e,{credentials:o,cache:"no-store"})`
+
+Elle reçoit donc une URL, un compteur de tentative, un mode de credentials et un objet facultatif de suivi de progression.
+
+Le comportement observé :
+
+- La première requête utilise le mode de credentials transmis.
+- En cas d'exception réseau avec `credentials: "omit"`, la fonction tente une seconde requête avec `credentials: "include"`.
+- Si cette tentative réussit, la variable de configuration `t` est modifiée en `"include"`.
+- En cas de réponse HTTP 401 ou 403 avec `omit`, une tentative avec `include` est également effectuée.
+- Les réponses 4xx autres que ces cas sont examinées via l'en-tête `x-amzn-ErrorType`.
+- Les valeurs correspondant à `Expired`, `InvalidArgument` ou `NotAuthorized` déclenchent une erreur identifiée comme `Wyze streaming session expired`.
+- Les autres réponses 4xx conduisent à `null`.
+- Les réponses non réussies de type 5xx sont réessayées jusqu'à deux fois supplémentaires avant qu'une erreur HTTP soit levée.
+- Lorsque la réponse contient un flux lisible, la fonction lit le corps progressivement et actualise les informations de progression.
+- Lorsque le flux n'est pas disponible, elle utilise `arrayBuffer()`.
+
+**D. Valeur initiale de la variable de credentials**
+
+Le relevé de `content.js` identifie à l'offset 19728 le début d'une fermeture contenant :
+
+`let t="omit",n={...e.DEFAULTS}`
+
+Cette initialisation est dans le contexte fonctionnel qui contient la logique de récupération examinée.
+
+La valeur initiale de `t` est donc bien `"omit"`.
+
+Le comportement de repli décrit dans la section précédente est ainsi confirmé par deux éléments du même code :
+- valeur initiale `omit` ;
+- changement de `t` vers `include` après réussite d'une tentative utilisant les credentials.
+
+La bascule est persistante dans cette variable de contexte pour les appels ultérieurs qui utilisent sa valeur.
+
+**Conséquence :** Optimyze essaie d'abord de récupérer les ressources sans transmettre les credentials du navigateur, mais sait utiliser les credentials lorsque cette première stratégie échoue.
+
+Cela constitue un indice fort d'une dépendance possible aux cookies ou à l'état d'authentification du navigateur.
+
+Il ne faut cependant pas conclure que les cookies sont l'unique mécanisme d'authentification, ni que leur copie suffirait à rendre les requêtes autonomes sur SERVOR.
+
+**E. Wrapper `N()`**
+
+Le code définit immédiatement après `L()` un wrapper de la forme :
+
+`const N=(e,n=null)=>L(e,0,t,n).catch(()=>null)`
+
+Ce wrapper :
+- appelle `L()` avec le mode de credentials courant ;
+- transmet éventuellement l'objet de progression ;
+- transforme les erreurs rejetées en résultat `null`.
+
+Cela signifie que certains appelants de `N()` ne reçoivent pas nécessairement le détail de l'erreur HTTP ou réseau d'origine.
+
+Il faudra tenir compte de cette perte d'information lors de l'analyse des chemins d'échec.
+
+**F. Récupération et analyse du manifeste par `P()`**
+
+Le code contient :
+
+`async function P(e)`
+
+La fonction :
+- lit `e.manifestUrl` ;
+- retourne une liste vide si aucune URL de manifeste n'a été observée ;
+- effectue un `fetch()` du manifeste avec le mode de credentials courant ;
+- vérifie le statut HTTP ;
+- lit le contenu texte ;
+- analyse le document XML avec `DOMParser` ;
+- vérifie la présence d'un élément `MPD` ;
+- extrait notamment la durée de présentation, l'heure de disponibilité et les structures `AdaptationSet` et `SegmentTemplate` ;
+- récupère les modèles d'URL média nécessaires à la suite du traitement.
+
+Le code de journalisation du manifeste applique une expurgation à certains paramètres nommés `Token`, `Signature` et `Key`.
+
+Cette protection est un constat positif, mais sa portée est limitée à cette opération de journalisation identifiée.
+
+Elle ne démontre pas que toutes les autres fonctions de journalisation, tous les messages d'erreur ou toutes les sorties de diagnostic expurgent systématiquement les URL et paramètres sensibles.
+
+Une vérification distincte des autres chemins de journalisation reste nécessaire avant toute réutilisation du mécanisme.
+
+**G. Préparation du fragment d'initialisation par `B()`**
+
+Déclaration unique repérée à l'offset 27525 :
+
+`async function B(e,t,n)`
+
+Les recherches `async function B(` et `function B(` retrouvent la même déclaration. Elles ne correspondent pas à deux fonctions différentes.
+
+Le comportement du corps est le suivant :
+
+1. Si `t.init` est présent, la fonction tente de le récupérer via `N(t.init)`.
+2. Si cette récupération réussit, elle retourne les données obtenues.
+3. En cas d'échec, elle journalise l'échec de l'URL d'initialisation.
+4. Elle inspecte ensuite `n[0]` en parcourant les boîtes MP4.
+5. Si une boîte `moov` est trouvée avant une boîte `moof` ou `mdat`, elle considère ce premier bloc comme contenant déjà le fragment d'initialisation attendu et le retourne.
+6. Sinon, si un modèle `mediaTemplate` ou `initTemplate` est disponible, elle reconstruit une URL d'initialisation avec `D()` et tente de la récupérer via `N()`.
+7. Si aucune voie ne fonctionne, elle retourne `null`.
+
+Le rôle visible est celui d'une routine de préparation ou de récupération du fragment d'initialisation MP4 d'une piste DASH.
+
+**Limite d'interprétation :** le contrat complet des paramètres `e`, `t` et `n` ne doit pas être déduit du seul corps de la fonction. Les appelants de `B()` doivent encore être examinés pour confirmer précisément la nature des données transmises, notamment celle de `n[0]`.
+
+**H. Synthèse du chemin DASH observé**
+
+Les éléments examinés permettent de décrire le mécanisme général suivant :
+
+1. `inject.js` observe les requêtes du lecteur Wyze.
+2. Les URL reconnues sont transmises à `content.js`.
+3. `content.js` associe les URL à un état de lecture contenant le manifeste et les modèles de fragments.
+4. `P()` récupère et analyse le manifeste DASH.
+5. `D()` reconstruit les URL de fragments à partir des modèles observés.
+6. `L()` récupère les ressources en essayant d'abord les requêtes sans credentials, puis éventuellement avec ceux du navigateur.
+7. `N()` fournit une interface simplifiée qui transforme les erreurs en résultat `null`.
+8. `B()` prépare ou récupère les fragments d'initialisation nécessaires à une piste.
+9. Les routines MP4 traitent ensuite les fragments et construisent le conteneur final.
+
+Cette séquence décrit les responsabilités observées dans le code. L'ordre exact des appels et le contrat complet des paramètres doivent encore être confirmés par l'examen des appelants.
+
+**Conclusion technique :** Optimyze est conçu pour exploiter les informations de lecture déjà observées dans le contexte Wyze Web View. Il ne s'agit pas d'un client autonome disposant d'une méthode documentée pour retrouver à lui seul les ressources de n'importe quel événement.
+
+##### 4.3.4.10 Ce qui reste à démontrer pour Optimyze
+
+- Le détail complet des appelants de `B()` et le contrat de ses paramètres.
+- Les conditions exactes d'adoption et de remplacement de `manifestUrl`.
+- La gestion complète des cookies et des credentials.
 - Les conditions de renouvellement des URL temporaires.
 - La possibilité de reproduire le mécanisme hors navigateur.
 - La compatibilité avec la Sonnette Grille.
 - La compatibilité future avec les Outdoor Cam.
 - La possibilité de récupérer les clips sans session Web active.
 - La robustesse du moteur sur des flux DASH réels et leurs éventuelles particularités.
+- La couverture de l'expurgation des URL et paramètres sensibles dans tous les chemins de journalisation.
 
 Aucune installation ou connexion de compte Wyze via Optimyze n'est autorisée.
 
-##### 4.3.4.10 Pièges liés aux fonctions homonymes dans le JavaScript minifié
+##### 4.3.4.11 Pièges liés aux fonctions homonymes dans le JavaScript minifié
 
 L'analyse de `content.js` a révélé plusieurs noms de fonctions déclarés plusieurs fois.
 
@@ -877,7 +1088,7 @@ Le script utilise Node.js natif et lit le jeton depuis le fichier secret.
 
 Il masque les informations sensibles dans les sorties et ne télécharge aucun média.
 
-Plusieurs appels autorisés ont été effectués sur une fenêtre d'événement réelle de la Sonnette Grille.
+Trois appels autorisés ont été effectués sur une fenêtre d'événement réelle de la Sonnette Grille.
 
 Résultat observé :
 - HTTP 500 ;
@@ -1118,24 +1329,26 @@ Aucune modification de Homer n'est prévue pendant l'audit.
 | Étape | Travail | Résultat attendu | État |
 |---:|---|---|---|
 | 1 | Terminer l'analyse statique d'Optimyze | Compréhension du mécanisme | Première phase réalisée |
-| 2 | Examiner les autres scripts de l'extension | Cartographie complète | Partiellement réalisé |
+| 2 | Examiner les autres scripts de l'extension | Cartographie des scripts principaux | `inject.js` et `content.js` examinés ; autres scripts à confirmer |
 | 3 | Comparer Axios et Node natif hors réseau | Identifier les différences de requête | À faire |
 | 4 | Étudier l'extraction indépendante du navigateur | Choisir une méthode | À faire |
 | 5 | Valider le moteur MP4 sur médias synthétiques | Reconstruction audio/vidéo fidèle | **Validé pour le cas synthétique testé** |
-| 6 | Documenter les fonctions homonymes de `content.js` | Extraction reproductible | **Inventaire et rôles principaux documentés ; portées complètes non formellement cartographiées** |
-| 7 | Tester le moteur sur fragments Wyze réels | Compatibilité avec les médias de la caméra | À faire |
-| 8 | Définir le modèle de sécurité | Architecture documentée | À faire |
-| 9 | Concevoir le prototype isolé | Prototype non productif | À faire |
-| 10 | Obtenir une ressource de lecture réelle et inspecter la réponse expurgée | URL et métadonnées comprises | À faire |
-| 11 | Demander confirmation avant le téléchargement réel | Autorisation explicite | À faire |
-| 12 | Télécharger un premier clip autorisé | Premier fichier récupéré | Non effectué |
-| 13 | Vérifier MP4, son et intégrité | Lecture validée | À faire |
-| 14 | Auditer le prototype | Risques identifiés et corrigés | À faire |
-| 15 | Soumettre le déploiement à validation | Autorisation préalable | À faire |
-| 16 | Installer le service sur SERVOR | Déploiement contrôlé | Non commencé |
-| 17 | Construire l'interface de consultation | Archives accessibles | À faire |
-| 18 | Réparer et diagnostiquer les Outdoor Cam | Éligibilité à l'intégration | En attente |
-| 19 | Intégrer chaque Outdoor Cam séparément | Extension progressive | Non commencé |
+| 6 | Documenter les fonctions homonymes de `content.js` | Extraction reproductible | **Inventaire des déclarations nommées et rôles principaux documentés ; portées complètes non formellement cartographiées** |
+| 7 | Examiner les appelants de `B()` | Contrat des paramètres confirmé | À faire |
+| 8 | Vérifier les autres chemins de journalisation | Couverture de l'expurgation des secrets | À faire |
+| 9 | Tester le moteur sur fragments Wyze réels | Compatibilité avec les médias de la caméra | À faire |
+| 10 | Définir le modèle de sécurité | Architecture documentée | À faire |
+| 11 | Concevoir le prototype isolé | Prototype non productif | À faire |
+| 12 | Obtenir une ressource de lecture réelle et inspecter la réponse expurgée | URL et métadonnées comprises | À faire |
+| 13 | Demander confirmation avant le téléchargement réel | Autorisation explicite | À faire |
+| 14 | Télécharger un premier clip autorisé | Premier fichier récupéré | Non effectué |
+| 15 | Vérifier MP4, son et intégrité | Lecture validée | À faire |
+| 16 | Auditer le prototype | Risques identifiés et corrigés | À faire |
+| 17 | Soumettre le déploiement à validation | Autorisation préalable | À faire |
+| 18 | Installer le service sur SERVOR | Déploiement contrôlé | Non commencé |
+| 19 | Construire l'interface de consultation | Archives accessibles | À faire |
+| 20 | Réparer et diagnostiquer les Outdoor Cam | Éligibilité à l'intégration | En attente |
+| 21 | Intégrer chaque Outdoor Cam séparément | Extension progressive | Non commencé |
 
 Aucune étape ne doit être considérée comme validée sans résultat expérimental.
 
@@ -1162,7 +1375,7 @@ La validation synthétique du moteur MP4 ne remplace pas le test d'un véritable
 2. Réponses SUCCESS et événements associés à la Sonnette Grille.
 3. Identification des ressources S3 JPEG et KVS Replay.
 4. Vérification que la ressource S3 examinée est une image et non le clip vidéo.
-5. Plusieurs appels autorisés à l'endpoint Kinesis Replay ont renvoyé HTTP 500 générique.
+5. Trois appels autorisés à l'endpoint Kinesis Replay ont renvoyé HTTP 500 générique.
 6. Aucun clip téléchargé.
 7. Aucun événement marqué comme lu.
 8. Décision de ne pas effectuer de nouvelle tentative Replay sans autorisation explicite.
@@ -1175,8 +1388,9 @@ La validation synthétique du moteur MP4 ne remplace pas le test d'un véritable
 4. Aucun script exécuté et extension non installée.
 5. Analyse du manifeste : scripts injectés sur les pages Wyze, mondes MAIN et isolé.
 6. Analyse de `inject.js` : interception de fetch et XHR, filtrage des URL DASH, communication via `window.postMessage`.
-7. Analyse ciblée de `content.js` : association des URL aux cartes vidéo, stockage des URL de manifeste et fragments, construction des paramètres TrackNumber et SequenceNumber, récupération du manifeste et reconstruction MP4.
-8. Conclusion provisoire : l'extension semble exploiter les requêtes de lecture déjà effectuées par Wyze Web View. La possibilité de reproduire ce mécanisme hors navigateur reste à démontrer.
+7. Calcul du SHA-256 de `inject.js` : `e86d804af5453d215ddc54bac78f3db7db16522dc6743dc8c68c0fb13a3cb50e`.
+8. Analyse ciblée de `content.js` : association des URL aux cartes vidéo, stockage des URL de manifeste et fragments, construction des paramètres TrackNumber et SequenceNumber, récupération du manifeste et reconstruction MP4.
+9. Conclusion provisoire : l'extension semble exploiter les requêtes de lecture déjà effectuées par Wyze Web View. La possibilité de reproduire ce mécanisme hors navigateur reste à démontrer.
 
 ### 22 novembre 2026 — Évolution du périmètre
 
@@ -1232,24 +1446,45 @@ Décisions complémentaires :
 14. Extension de l'inventaire aux huit autres noms répétés, avec offsets, signatures et rôles identifiés à partir des extraits.
 15. Conclusion : l'identification d'une fonction minifiée doit être faite par signature, corps, contexte, appels et portée lexicale, jamais par son seul nom.
 
+### 22 novembre 2026 — Analyse complémentaire du mécanisme DASH et des credentials
+
+1. Recherche ciblée des déclarations et occurrences de `B`, `D`, `L`, `N`, `P` et `y` dans le `content.js` identifié par son SHA-256.
+2. Vérification que les motifs de recherche `async function B(` et `function B(` retrouvent la même déclaration unique à l'offset 27525.
+3. Identification de `B(e,t,n)` comme routine de préparation ou récupération du fragment d'initialisation MP4.
+4. Identification de `D(e,t,n,o)` à l'offset 23714 comme fonction de reconstruction des URL de fragments à partir des templates observés.
+5. Identification de `L(e,n=0,o=t,r=null)` à l'offset 23938 comme fonction de récupération HTTP avec gestion des retries, des statuts et des credentials.
+6. Confirmation, à l'offset 19728, que la variable de credentials `t` est initialisée à `"omit"` dans le contexte fonctionnel concerné.
+7. Confirmation que `L()` peut réessayer avec `"include"` après une erreur réseau ou une réponse HTTP 401/403, puis mémoriser ce mode après réussite.
+8. Identification de `N()` comme wrapper de `L()` qui transforme les erreurs rejetées en `null`.
+9. Identification de `P()` comme fonction de récupération et d'analyse du manifeste DASH/MPD.
+10. Observation d'une expurgation des paramètres `Token`, `Signature` et `Key` dans la journalisation du manifeste ; cette observation ne prouve pas que toutes les autres journalisations soient expurgées.
+11. Confirmation de la structure d'état créée par `y()` : `manifestUrl`, `mediaTemplate`, `initTemplate` et `tracks`.
+12. Observation de l'adoption ou de la correction de `manifestUrl` à partir de la source du lecteur.
+13. Conclusion : le mécanisme de récupération s'appuie sur les URL observées dans le lecteur et peut dépendre des credentials du navigateur.
+14. Limite maintenue : les appelants de `B()` doivent encore être examinés pour confirmer complètement le contrat de ses paramètres.
+15. Aucune requête Wyze supplémentaire, aucun téléchargement de clip, aucune installation d'extension et aucune modification de production.
+
 ---
 
 ## 13. Point de reprise
 
-**Prochaine tâche : préparer le premier essai avec un véritable événement de la Sonnette Grille, après validation de la version consolidée du présent document.**
+**Prochaine tâche : poursuivre l'analyse statique des appelants de `B()` et des chemins de récupération, puis préparer le premier essai avec un véritable événement de la Sonnette Grille uniquement après validation de la version consolidée du présent document.**
 
 Priorités :
 
 1. Conserver les fichiers du laboratoire MP4, les deux moteurs et leurs empreintes SHA-256.
-2. Poursuivre l'analyse statique d'Optimyze et vérifier les fonctions restantes de récupération des fragments.
-3. Si nécessaire, approfondir la cartographie des portées lexicales des dix groupes de fonctions homonymes.
-4. Comparer hors réseau les requêtes Axios de wyze-node avec le script Node natif.
-5. Déterminer comment obtenir les ressources de lecture DASH réellement utilisées par Wyze Web View.
-6. Préparer l'inspection expurgée d'une ressource réelle, sans afficher d'URL signée ni de jeton.
-7. Vérifier que les fragments réels sont compatibles avec le parseur et le moteur MP4 corrigé.
-8. Demander une confirmation explicite avant tout téléchargement effectif du clip.
-9. Après téléchargement autorisé, vérifier le conteneur, les pistes, le son, la durée et l'intégrité du fichier.
-10. Définir ensuite l'architecture du prototype isolé.
+2. Examiner tous les appels à `B()` pour confirmer le contrat de ses paramètres et la nature des données transmises.
+3. Examiner les appelants de `P()`, `D()` et `N()` pour confirmer le chemin d'exécution et la gestion des échecs.
+4. Vérifier les autres chemins de journalisation afin de déterminer si des URL ou paramètres sensibles peuvent apparaître ailleurs.
+5. Examiner précisément la validation des messages échangés entre `inject.js` et `content.js`.
+6. Si nécessaire, approfondir la cartographie des portées lexicales des dix groupes de fonctions homonymes.
+7. Comparer hors réseau les requêtes Axios de wyze-node avec le script Node natif.
+8. Déterminer comment obtenir les ressources de lecture DASH réellement utilisées par Wyze Web View.
+9. Préparer l'inspection expurgée d'une ressource réelle, sans afficher d'URL signée ni de jeton.
+10. Vérifier que les fragments réels sont compatibles avec le parseur et le moteur MP4 corrigé.
+11. Demander une confirmation explicite avant tout téléchargement effectif du clip.
+12. Après téléchargement autorisé, vérifier le conteneur, les pistes, le son, la durée et l'intégrité du fichier.
+13. Définir ensuite l'architecture du prototype isolé.
 
 Ne pas :
 - installer Optimyze ;
@@ -1293,8 +1528,12 @@ Ce fichier est le référentiel cumulatif du projet Wyze.
 | Endpoint Replay | HTTP 500, cause inconnue |
 | Analyse statique d'Optimyze | Première phase réalisée |
 | Empreinte et identification du content.js | Validées |
+| Empreinte et analyse statique de inject.js | Validées pour les éléments examinés |
 | Inventaire des fonctions homonymes | Réalisé pour les déclarations nommées |
 | Cartographie exhaustive des portées lexicales | Non réalisée |
+| Analyse de `B`, `D`, `L`, `N`, `P` et `y` | Première analyse réalisée |
+| Contrat complet des paramètres de `B()` | À confirmer par les appelants |
+| Couverture de l'expurgation des journaux | À vérifier |
 | Extraction du moteur MP4 | Réalisée |
 | Reconstruction MP4 synthétique | Validée pour le cas testé |
 | Préservation des edit lists simples | Validée pour le cas testé |
