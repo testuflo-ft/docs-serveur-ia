@@ -501,6 +501,61 @@ Le moteur corrigé reste donc un candidat expérimental.
 
 Aucune installation ou connexion de compte Wyze via Optimyze n'est autorisée.
 
+#### 4.3.4.10 Pièges liés aux fonctions homonymes dans le JavaScript minifié
+
+L'analyse de `content.js` a révélé un piège important : plusieurs fonctions distinctes peuvent porter exactement le même nom dans le fichier minifié.
+
+Une recherche textuelle simple sur un nom de fonction ne permet donc pas d'identifier avec certitude la fonction recherchée.
+
+Deux collisions ont notamment été constatées :
+
+**Collision n° 1 : `function g()`**
+
+Deux déclarations distinctes de `function g()` ont été identifiées :
+
+- La première concerne le traitement et le nettoyage des noms de fichiers.
+- La seconde intervient dans la construction des boîtes MP4 et participe à la création de la structure `moov`, notamment des pistes `trak`, des en-têtes `tkhd` et des boîtes `mdia`.
+
+C'est la seconde fonction qui est pertinente pour l'analyse du moteur de reconstruction MP4.
+
+Retenir la première occurrence aurait conduit à extraire une fonction sans rapport avec la construction du conteneur vidéo.
+
+**Collision n° 2 : `function u()`**
+
+Deux déclarations distinctes de `function u()` ont également été identifiées :
+
+- La première concerne un mécanisme de stockage.
+- La seconde analyse les données d'initialisation MP4 et extrait les métadonnées nécessaires à la reconstruction des pistes.
+
+C'est la seconde fonction qui est pertinente pour comprendre le traitement des fragments d'initialisation DASH.
+
+Elle retourne notamment les informations relatives à l'identifiant de piste, au type de média, aux dimensions vidéo, aux échelles de temps, aux descriptions d'échantillons et aux paramètres par défaut.
+
+Elle a également joué un rôle central dans l'identification du problème de conservation des edit lists `edts/elst`.
+
+**Méthode obligatoire pour toute extraction ultérieure**
+
+Pour chaque fonction minifiée étudiée :
+
+1. Rechercher toutes les déclarations portant le nom concerné.
+2. Relever leurs positions exactes dans le fichier.
+3. Comparer leurs signatures et leurs corps.
+4. Examiner les fonctions qui les appellent.
+5. Vérifier les données consommées et les valeurs retournées.
+6. Confirmer le rôle à partir du contexte d'exécution statiquement identifiable.
+7. Extraire uniquement la déclaration dont le rôle a été démontré.
+8. Conserver une référence à la position et au SHA-256 du fichier source.
+
+Ne jamais se contenter de la première occurrence retournée par `grep`, une recherche textuelle ou un script d'extraction.
+
+**Conséquence pour la reproductibilité**
+
+L'extraction du moteur MP4 doit être considérée comme une opération d'analyse structurée, et non comme une simple copie de fonctions identifiées par leur nom.
+
+Cette précaution est particulièrement importante pour `g()` et `u()`, dont les occurrences ont des responsabilités totalement différentes.
+
+Toute nouvelle version de l'extension devra faire l'objet d'une nouvelle vérification des déclarations, de leurs positions, de leurs signatures et de leurs appels. Les noms et positions observés dans la version 0.5.1 ne doivent pas être supposés stables.
+
 ---
 
 ## 5. Authentification Wyze
