@@ -1555,29 +1555,151 @@ Le moteur reste un outil expérimental en laboratoire.
 
 Aucune modification n'a été effectuée sur SERVOR ou dans l'environnement de production.
 
+### 15.5 Moteur MP4 indépendant sur Mac mini : architecture et pipeline
+
+Le développement du moteur MP4 indépendant est réalisé dans un environnement de laboratoire distinct de SERVOR.
+
+**Environnement :**
+
+- Machine : Mac mini.
+- Répertoire du projet : `~/dev/mp4-engine-lab/phase4/mp4-engine`.
+- Node.js : 24.22.3.
+- FFmpeg : 9.0.2.
+- FFprobe : 9.0.2.
+- Modules JavaScript ES (`"type": "module"`).
+- Aucune dépendance npm à l'exécution.
+
+**Organisation des sources :**
+
+```text
+mp4-engine/
+├── src/
+│   ├── binary/
+│   │   └── reader.js
+│   ├── boxes/
+│   │   ├── parser.js
+│   │   └── validator.js
+│   ├── fragments/
+│   │   └── moof-parser.js
+│   ├── tracks/
+│   │   └── init-parser.js
+│   ├── muxer/
+│   │   └── mp4-builder.js
+│   └── index.js
+├── test/
+│   ├── fixtures/
+│   │   └── generated-h264-aac-fragmented.mp4
+│   ├── phase1.test.js
+│   ├── phase2.test.js
+│   ├── phase3.test.js
+│   ├── phase4.integration.test.js
+│   └── phase5.test.js
+└── package.json
+```
+
+**Interface publique du moteur :**
+
+Le fichier `src/index.js` expose six fonctions :
+
+- `BinaryReader` : lecture binaire.
+- `parseBoxes` : analyse des boîtes MP4.
+- `parseChildBoxes` : analyse des boîtes enfants.
+- `boxPayload` : accès au contenu des boîtes.
+- `validateBoxTree` : validation de l'arborescence.
+- `parseInitSegment` : analyse du segment d'initialisation.
+- `parseMoof` : analyse des fragments média.
+- `buildMp4` : reconstruction du conteneur MP4.
+
+**Pipeline du test d'intégration de phase 4 :**
+
+Le fichier `test/phase4.integration.test.js` démontre la chaîne suivante :
+
+1. Lecture du fichier MP4 fragmenté avec `parseBoxes`.
+2. Identification du premier `moof`.
+3. Extraction du segment d'initialisation.
+4. Analyse des pistes et des valeurs par défaut avec `parseInitSegment`.
+5. Analyse de chaque fragment avec `parseMoof`.
+6. Extraction des données binaires de chaque échantillon à partir de `dataOffset` et `size`.
+7. Regroupement des échantillons par identifiant de piste.
+8. Reconstruction du fichier final avec `buildMp4`.
+9. Vérification des flux avec FFprobe.
+10. Décodage complet avec FFmpeg.
+11. Comparaison des empreintes des images vidéo décodées.
+12. Comparaison des signatures des paquets AAC : PTS, durée, taille et SHA-256.
+
+Ce pipeline constitue une base d'intégration réutilisable pour étudier la compatibilité avec d'autres fragments DASH.
+
+**Fixture synthétique du Mac mini :**
+
+Le fichier `test/fixtures/generated-h264-aac-fragmented.mp4` est un média synthétique indépendant de Wyze.
+
+Caractéristiques observées avec FFprobe :
+
+- Vidéo H.264 Constrained Baseline, 320 × 240.
+- Audio AAC-LC, 48 kHz, mono.
+- 20 paquets vidéo.
+- 95 paquets audio.
+- Durée du conteneur : environ 2,021 secondes.
+
+Un décodage intégral des deux pistes avec FFmpeg a été exécuté :
+
+```bash
+ffmpeg -v error -i "$P" -map 0:v:0 -map 0:a:0 -f null -
+```
+
+Résultat : code retour 0, aucune erreur de décodage.
+
+**État :** moteur indépendant validé pour les scénarios synthétiques couverts par les 25 tests. La compatibilité avec les fragments provenant réellement de Wyze reste à démontrer.
+
+Ce moteur est distinct du moteur Optimyze extrait et corrigé dans le laboratoire SERVOR. Les deux travaux ne doivent pas être confondus.
+
+
 ---
 
-## 16. Point de reprise
+## 16. Point de reprise — 23 novembre 2026
 
-Le travail peut reprendre sur la phase 6 du moteur MP4 indépendant.
+La phase 6 du moteur MP4 indépendant est temporairement suspendue.
 
-La prochaine étape doit être une inspection en lecture seule des fichiers du projet et des sauvegardes, suivie d'une revue du code existant avant toute modification.
+Les 25 tests des phases 1 à 5 sont validés. Les pistes de durcissement recensées précédemment restent des sujets de revue, et non des anomalies démontrées.
 
-Les pistes à examiner comprennent notamment :
+### 16.1 Objectif immédiat
 
-- le traitement du drapeau `duration-is-empty` dans `tfhd` ;
-- la gestion des identifiants de pistes ;
-- les limites cumulées de boîtes analysées ;
-- les conditions d'acceptation des boîtes `tfdt` et `trun` ;
-- les fragments contenant zéro échantillon ;
-- les indicateurs `tfhd` non pris en charge ;
-- les offsets de composition signés dans les `trun` de version 1 ;
-- les plages de données `mdat`, leurs chevauchements et leurs limites ;
-- les interactions entre `base_data_offset`, `default-base-is-moof` et `data_offset`.
+Étudier la compatibilité entre :
 
-Ces éléments sont des pistes de revue, pas des anomalies déjà démontrées. Il faudra examiner le code et les spécifications avant de conclure.
+- le moteur MP4 indépendant développé sur le Mac mini ;
+- les fragments DASH conservés dans `/tmp/wyze-audit.hiRZRx/mp4-lab` sur SERVOR.
 
-La règle reste de ne modifier le parseur qu'après avoir identifié un comportement précis, établi un test qui le reproduit et conservé une sauvegarde.
+Aucune modification des sources existantes du moteur ne doit être effectuée pour cette première étude.
+
+### 16.2 Étapes prévues
+
+1. Consolider les informations sur les fichiers DASH présents dans le laboratoire SERVOR.
+2. Vérifier leur provenance et leur statut : médias synthétiques ou ressources réellement issues de Wyze.
+3. Examiner leur manifeste MPD, leurs segments d'initialisation et leurs fragments média.
+4. Comparer les structures des fragments avec les capacités actuelles de `parseInitSegment` et `parseMoof`.
+5. Définir un adaptateur isolé permettant de transmettre les échantillons au format attendu par `buildMp4`.
+6. Réaliser les essais sur une copie de travail, sans modifier les sources ni les tests existants.
+7. Vérifier le MP4 obtenu avec FFprobe et FFmpeg sur le Mac mini.
+
+### 16.3 Conditions de validation
+
+La compatibilité ne sera considérée comme démontrée que si :
+
+- les deux pistes audio et vidéo sont correctement identifiées ;
+- les échantillons sont extraits sans erreur d'offset ;
+- les durées et les horodatages sont cohérents ;
+- la synchronisation audio/vidéo est préservée ;
+- le fichier reconstruit est reconnu et intégralement décodable.
+
+### 16.4 Limites et autorisations
+
+- Aucun nouvel appel réseau Wyze sans autorisation explicite.
+- Aucun nouvel appel à l'endpoint Kinesis Replay sans autorisation explicite.
+- Aucun téléchargement de clip sans confirmation explicite au moment du téléchargement.
+- Aucun déploiement ni modification de production sur SERVOR.
+- Aucun changement du moteur MP4 avant identification d'un besoin technique démontré et validation d'un test reproductible.
+
+La reprise de la phase 6 interviendra après cette étude d'intégration, si elle reste nécessaire.
 
 ---
 
@@ -1592,7 +1714,8 @@ La règle reste de ne modifier le parseur qu'après avoir identifié un comporte
 | Récupération Kinesis Replay | Échec HTTP 500 lors des trois essais |
 | Téléchargement d'un clip Wyze | Non réalisé |
 | Analyse statique d'Optimyze | Réalisée, avec limites documentées |
-| Moteur MP4 indépendant, phases 1 à 5 | 25 tests réussis |
+| Moteur MP4 indépendant, phases 1 à 5 | 25 tests réussis ; intégration DASH à étudier |
+| Compatibilité avec les fragments DASH de SERVOR | À vérifier |
 | Compatibilité avec des fragments Wyze réels | Non démontrée |
 | Intégration à SERVOR | Non réalisée |
 
