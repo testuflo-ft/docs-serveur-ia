@@ -1,3 +1,5 @@
+
+
 # Audit Wyze — Sonnette Grille
 
 Document de référence technique — Projet d'archivage local des événements vidéo Wyze.
@@ -319,6 +321,7 @@ La réponse est transmise avec le marqueur `__wyzeDownloader: "src"`.
 Cette observation doit être prise en compte dans l'analyse de sécurité de la frontière entre le monde MAIN et le monde isolé. Elle ne démontre pas qu'une exploitation est possible.
 
 Le fichier `inject.js` ne constitue pas un téléchargeur autonome : il observe les requêtes effectuées par la page et transmet les URL reconnues à l'autre contexte.
+
 #### 4.3.3 Analyse statique de content.js
 
 Les extraits examinés montrent que le script :
@@ -698,6 +701,8 @@ Les éléments examinés permettent de décrire le mécanisme général suivant 
 
 1. `inject.js` observe les requêtes du lecteur Wyze.
 2. Les URL reconnues sont transmises à `content.js`.
+
+
 3. `content.js` associe les URL à un état de lecture contenant le manifeste et les modèles de fragments.
 4. `P()` récupère et analyse le manifeste DASH.
 5. `D()` reconstruit les URL de fragments à partir des modèles observés.
@@ -1197,6 +1202,162 @@ L'utilisateur ne devra pas avoir à parcourir manuellement les dossiers du NAS p
                   |
                   v
           Lecture des archives
+```
+
+### 9.3 Isolation et accès
+
+- Service Docker dédié.
+- Volumes indépendants.
+- Aucun accès inutile aux autres services.
+- Secrets absents de l'image Docker.
+- Interface accessible sur le réseau local.
+- Accès distant uniquement via les mécanismes sécurisés déjà utilisés sur SERVOR.
+- Aucun accès public direct.
+- Consultation possible même si le Mac mini est indisponible.
+
+### 9.4 Organisation indicative des archives
+
+```text
+Wyze-Archive/
+├── Sonnette-Grille/
+│   └── AAAA/
+│       └── MM/
+│           └── JJ/
+│               ├── evenement-001.mp4
+│               └── evenement-002.mp4
+├── Outdoor-Cam-1/
+├── Outdoor-Cam-2/
+├── Database/
+└── Thumbnails/
+```
+
+Le répertoire `Corpus-IA` est exclu : les archives vidéo ne font pas partie du corpus RAG.
+
+### 9.5 Stratégies techniques à comparer
+
+**A — API Wyze et Kinesis Replay**
+
+Comprendre l'erreur HTTP 500 et vérifier si ce mécanisme peut être exploité de manière fiable. Aucun nouvel appel à l'endpoint Replay sans autorisation explicite.
+
+**B — Extraction DASH/MP4**
+
+Approfondir l'analyse d'Optimyze et déterminer si les manifestes et fragments observés dans Wyze Web View peuvent être récupérés sans dépendance permanente à Chrome.
+
+Le moteur MP4 a désormais passé un test synthétique audio/vidéo. Les flux réels restent à tester.
+
+**C — Bibliothèque wyze-node**
+
+Réutiliser uniquement les méthodes utiles après audit, sans reprendre son stockage des secrets en clair.
+
+**D — Architecture hybride**
+
+Collecte des événements par API et extraction vidéo par un mécanisme distinct si nécessaire.
+
+Aucune stratégie complète n'est encore validée.
+
+Le choix final devra privilégier :
+- la sécurité ;
+- la fiabilité ;
+- l'autonomie ;
+- la simplicité de maintenance ;
+- la compatibilité avec les trois caméras ;
+- l'indépendance vis-à-vis de l'application mobile.
+
+---
+
+## 10. Interface de consultation : exigences
+
+L'interface Web devra être conçue comme une application autonome de consultation des archives.
+
+### 10.1 Tableau de bord
+
+Afficher :
+- les trois caméras ;
+- leur état de fonctionnement ;
+- le nombre d'événements archivés ;
+- les derniers événements ;
+- les éventuelles erreurs de synchronisation.
+
+Une caméra en attente de réparation ne devra pas être présentée comme opérationnelle.
+
+### 10.2 Recherche et navigation
+
+Filtres attendus :
+- caméra ;
+- date ;
+- période ;
+- événement ;
+- statut d'archivage.
+
+Une vue calendrier et une chronologie des événements sont souhaitées.
+
+### 10.3 Lecteur vidéo
+
+Le lecteur devra permettre :
+- lecture MP4 ;
+- lecture du son ;
+- pause et reprise ;
+- navigation dans la vidéo ;
+- affichage de la date et de la caméra ;
+- téléchargement du fichier original.
+
+La lecture devra fonctionner sur ordinateur et smartphone.
+
+### 10.4 Sécurité de l'interface
+
+- Authentification requise.
+- Aucun accès direct aux identifiants Wyze.
+- Pas de liens publics vers les vidéos.
+- API locale avec permissions minimales.
+- Protection contre l'accès à des fichiers hors du répertoire d'archives.
+- Aucun accès direct à la base de données depuis le navigateur.
+
+### 10.5 Intégration à l'environnement existant
+
+Une entrée dans Homer pourra être ajoutée après validation du système.
+
+Il faudra conserver les principes existants :
+- accès LAN direct ;
+- accès distant via Tailscale ;
+- absence d'exposition publique ;
+- authentification appropriée.
+
+Aucune modification de Homer n'est prévue pendant l'audit.
+
+---
+
+## 11. Étapes de validation avant déploiement
+
+| Étape | Travail | Résultat attendu | État |
+|---:|---|---|---|
+| 1 | Terminer l'analyse statique d'Optimyze | Compréhension du mécanisme | Première phase réalisée |
+| 2 | Examiner les autres scripts de l'extension | Cartographie des scripts principaux | `inject.js` et `content.js` examinés ; autres scripts à confirmer |
+| 3 | Comparer Axios et Node natif hors réseau | Identifier les différences de requête | À faire |
+| 4 | Étudier l'extraction indépendante du navigateur | Choisir une méthode | À faire |
+| 5 | Valider le moteur MP4 sur médias synthétiques | Reconstruction audio/vidéo fidèle | **Validé pour le cas synthétique testé** |
+| 6 | Documenter les fonctions homonymes de `content.js` | Extraction reproductible | **Inventaire des déclarations nommées et rôles principaux documentés ; portées complètes non formellement cartographiées** |
+| 7 | Examiner les appelants de `B()` | Contrat des paramètres confirmé | À faire |
+| 8 | Vérifier les autres chemins de journalisation | Couverture de l'expurgation des secrets | À faire |
+| 9 | Tester le moteur sur fragments Wyze réels | Compatibilité avec les médias de la caméra | À faire |
+| 10 | Définir le modèle de sécurité | Architecture documentée | À faire |
+| 11 | Concevoir le prototype isolé | Prototype non productif | À faire |
+| 12 | Obtenir une ressource de lecture réelle et inspecter la réponse expurgée | URL et métadonnées comprises | À faire |
+| 13 | Demander confirmation avant le téléchargement réel | Autorisation explicite | À faire |
+| 14 | Télécharger un premier clip autorisé | Premier fichier récupéré | Non effectué |
+| 15 | Vérifier MP4, son et intégrité | Lecture validée | À faire |
+| 16 | Auditer le prototype | Risques identifiés et corrigés | À faire |
+| 17 | Soumettre le déploiement à validation | Autorisation préalable | À faire |
+| 18 | Installer le service sur SERVOR | Déploiement contrôlé | Non commencé |
+| 19 | Construire l'interface de consultation | Archives accessibles | À faire |
+| 20 | Réparer et diagnostiquer les Outdoor Cam | Éligibilité à l'intégration | En attente |
+| 21 | Intégrer chaque Outdoor Cam séparément | Extension progressive | Non commencé |
+
+Aucune étape ne doit être considérée comme validée sans résultat expérimental.
+
+La validation synthétique du moteur MP4 ne remplace pas le test d'un véritable fichier Wyze.
+
+---
+
 ## 12. Architecture cible et exigences de sécurité
 
 L'objectif est de disposer d'une chaîne locale permettant de récupérer, analyser et reconstruire les vidéos Wyze, sans dépendre durablement de l'interface Web du fabricant.
@@ -1302,6 +1463,7 @@ L'analyse statique d'Optimyze a permis d'identifier les mécanismes d'intercepti
 Le moteur MP4 indépendant a été développé et testé sur un fichier synthétique H.264/AAC. Les tests d'intégration vérifient notamment la conservation des signatures des paquets audio et des images vidéo décodées.
 
 À ce stade, la récupération autonome des vidéos Wyze reste à démontrer.
+
 ## 15. Journal des travaux — 23 novembre 2026
 
 ### 15.1 Moteur MP4 indépendant : phase 4
@@ -1344,6 +1506,8 @@ Une seule ligne a été ajoutée dans `src/fragments/moof-parser.js` pour rejete
 
 ```js
 if((f.flags & 0x000004) && (f.flags & 0x000400)) fail('first_sample_flags and sample_flags are mutually exclusive');
+```
+
 Une sauvegarde du fichier avant modification a été conservée sous :
 
 `src/fragments/moof-parser.js.bak-phase5-trun-flags`
@@ -1353,8 +1517,10 @@ La documentation `README.md` a été actualisée pour présenter les phases 1 à
 ### 15.3 Résultat global des tests
 
 La suite complète a été exécutée avec :
-</> Bash 
+
+```bash
 npm test
+```
 
 Résultat :
 
@@ -1431,3 +1597,4 @@ La règle reste de ne modifier le parseur qu'après avoir identifié un comporte
 | Intégration à SERVOR | Non réalisée |
 
 **Conclusion :** le travail d'analyse et le moteur MP4 indépendant ont progressé, mais la récupération effective et la reconstruction d'une vidéo Wyze restent les objectifs techniques à démontrer. Le projet demeure en phase expérimentale et aucune modification de production n'a été effectuée.
+
