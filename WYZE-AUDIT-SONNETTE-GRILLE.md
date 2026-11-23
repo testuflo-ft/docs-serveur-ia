@@ -1599,7 +1599,7 @@ mp4-engine/
 
 **Interface publique du moteur :**
 
-Le fichier `src/index.js` expose six fonctions :
+Le fichier `src/index.js` expose huit fonctions :
 
 - `BinaryReader` : lecture binaire.
 - `parseBoxes` : analyse des boîtes MP4.
