@@ -5,7 +5,7 @@
 Document de référence technique — Projet d'archivage local des événements vidéo Wyze.
 
 - **Statut global :** audit exploratoire en cours ; moteur MP4 validé sur médias synthétiques ; récupération d'un véritable clip Wyze non encore démontrée.
-- **Dernière mise à jour :** 23 novembre 2026 — validation des phases 1 à 5 d'un moteur MP4 indépendant sur le Mac mini ; approfondissement de l'analyse statique d'Optimyze.
+- **Dernière mise à jour :** 23 novembre 2026 — adaptation expérimentale de wyze-node à un TokenStore injecté sur le Mac mini ; validation statique uniquement, tests fonctionnels à venir. validation des phases 1 à 5 d'un moteur MP4 indépendant sur le Mac mini ; approfondissement de l'analyse statique d'Optimyze.
 - **NAS cible :** Synology SERVOR — DSM 7.4.1-90080 — x86_64.
 - **Caméra pilote :** Wyze Video Doorbell Pro — « Sonnette Grille ».
 - **Modèle :** GW_BE1.
@@ -1718,6 +1718,306 @@ La reprise de la phase 6 interviendra après cette étude d'intégration, si ell
 | Compatibilité avec les fragments DASH de SERVOR | À vérifier |
 | Compatibilité avec des fragments Wyze réels | Non démontrée |
 | Intégration à SERVOR | Non réalisée |
+| Adaptation sécurisée de wyze-node sur Mac mini | Prototype adapté ; contrôles statiques réussis |
+| TokenStore — tests unitaires | 8 tests réussis ; limites de sécurité restantes |
+| Intégration fonctionnelle Wyze / TokenStore | À tester avec jetons fictifs |
 
 **Conclusion :** le travail d'analyse et le moteur MP4 indépendant ont progressé, mais la récupération effective et la reconstruction d'une vidéo Wyze restent les objectifs techniques à démontrer. Le projet demeure en phase expérimentale et aucune modification de production n'a été effectuée.
 
+## 18. Adaptation sécurisée de wyze-node — laboratoire Mac mini — 23 novembre 2026
+
+### 18.1 Objectif
+
+Étudier la réutilisation de la bibliothèque communautaire `wyze-node` version 2.12.2 pour les futurs traitements Wyze, en remplaçant son stockage local des jetons par un mécanisme indépendant, explicitement injecté et conçu pour protéger les secrets.
+
+La bibliothèque originale utilise `node-localstorage` et initialise automatiquement un répertoire relatif `./scratch`. Ce comportement n'est pas adapté à un service autonome sécurisé.
+
+Le travail est réalisé exclusivement dans un laboratoire sur le Mac mini. Il ne constitue ni une intégration à SERVOR ni une autorisation de connexion supplémentaire à Wyze.
+
+### 18.2 Environnement et séparation des sources
+
+Machine de développement : Mac mini.
+
+Répertoire de travail courant :
+
+`~/dev/mp4-engine-lab/servor-dash-lab`
+
+Environnement :
+- Node.js 24.22.3.
+- npm 11.19.1.
+- Bibliothèque étudiée : `wyze-node` 2.12.2.
+- Module CommonJS (`module.exports = Wyze`).
+
+Organisation du laboratoire :
+
+```text
+wyze-token-store-lab/
+├── token-store.js
+├── test-token-store.js
+├── wyze-node-source/
+│   ├── package.json
+│   └── src/
+└── wyze-node-adapted/
+    ├── package.json
+    └── src/
+```
+
+Règle impérative :
+- `wyze-node-source` conserve les sources originales extraites.
+- `wyze-node-adapted` est la seule copie modifiée.
+- `token-store.js` est le prototype indépendant de stockage.
+- Ne jamais modifier la source originale pour réaliser les adaptations.
+
+Le dossier `wyze-token-store-lab` a été créé avec des permissions privées `700`.
+
+### 18.3 Sauvegarde des éléments de l'audit sur SERVOR
+
+Une archive de travail a été créée dans le dossier partagé Synology `Wyze-Archive`.
+
+Chemin sur SERVOR :
+
+`/volume1/Wyze-Archive/Audit-Wyze-2026-11-22-23`
+
+Les éléments non secrets de l'audit temporaire ont été copiés depuis :
+
+`/tmp/wyze-audit.hiRZRx`
+
+La sauvegarde comprend notamment :
+- les scripts de diagnostic ;
+- le laboratoire MP4 ;
+- les sources `wyze-node` ;
+- les fichiers d'analyse statique Optimyze ;
+- les archives de sources.
+
+Les secrets ont été volontairement exclus.
+
+Vérification effectuée par comparaison récursive entre le dossier temporaire et la sauvegarde : seule la présence du dossier `secrets` dans la source temporaire explique la différence.
+
+Taille constatée de la sauvegarde : environ 8,6 Mo.
+
+Archive de la bibliothèque `wyze-node` 2.12.2 :
+
+`wyze-node-2.12.2-source.tar.gz`
+
+SHA-256 :
+
+`78a5db3057653a7fbd76a0c2e414f1cb4631868f400c31153e953e9d9c4ed4dd`
+
+Cette sauvegarde est une copie documentaire de laboratoire. Elle ne constitue pas une installation ou un déploiement de la bibliothèque sur SERVOR.
+
+### 18.4 Analyse du stockage original de wyze-node
+
+La bibliothèque originale utilise :
+
+```js
+const LocalStorage = require('node-localstorage').LocalStorage
+const localStorage = new LocalStorage('./scratch')
+```
+
+Le chemin `./scratch` est relatif au répertoire courant du processus Node.js.
+
+Les méthodes concernées dans `src/index.js` sont :
+
+- `getTokens()` : lit `access_token` et `refresh_token` séparément ;
+- `setTokens()` : écrit les deux jetons séparément ;
+- `login()` : obtient les jetons et les stocke ;
+- `getRefreshToken()` : renouvelle les jetons et les stocke.
+
+La bibliothèque relit également les jetons avant plusieurs opérations API.
+
+L'analyse a identifié 19 appels à `getTokens()` dans le fichier `src/index.js`.
+
+La bibliothèque ne doit donc pas être reprise telle quelle pour un futur service autonome.
+
+### 18.5 Prototype indépendant TokenStore
+
+Un prototype a été créé dans :
+
+`wyze-token-store-lab/token-store.js`
+
+Principes déjà implémentés :
+- stockage conjoint des deux jetons dans un fichier JSON ;
+- répertoire privé ;
+- ouverture du fichier avec `O_NOFOLLOW` ;
+- vérification que le fichier lu est régulier ;
+- validation de la structure JSON ;
+- écriture dans un fichier temporaire exclusif ;
+- permissions restrictives ;
+- synchronisation du fichier avant remplacement ;
+- remplacement atomique du fichier de jetons ;
+- verrou d'écriture exclusif ;
+- vérification de l'identité du verrou lors de sa libération.
+
+Le fichier contient les champs suivants :
+
+- `version` ;
+- `accessToken` ;
+- `refreshToken` ;
+- `updatedAt`.
+
+Lorsque le fichier n'existe pas, `read()` retourne `null`.
+
+Les erreurs autres que `ENOENT` sont propagées.
+
+Tests déjà exécutés avec `node --test` :
+
+- 8 tests réussis ;
+- 0 échec.
+
+Les tests couvrent notamment :
+- stockage et relecture des deux jetons ;
+- permissions privées ;
+- rejet des jetons invalides ;
+- écritures concurrentes dans le processus de test ;
+- refus de remplacer un fichier existant par un lien symbolique ;
+- blocage prudent en présence d'un verrou abandonné ;
+- conservation des données valides malgré un fichier temporaire orphelin ;
+- rejet d'un JSON invalide.
+
+Limites importantes :
+- la concurrence entre plusieurs processus n'a pas encore été démontrée ;
+- la lecture ne vérifie pas encore explicitement les permissions du fichier existant ;
+- la robustesse complète du verrou et de sa libération doit encore être examinée ;
+- ce prototype n'est pas un stockage de production validé.
+
+### 18.6 Adaptation de wyze-node dans la copie de travail
+
+Une copie de travail a été créée :
+
+`wyze-token-store-lab/wyze-node-adapted`
+
+Les modifications effectuées concernent exclusivement :
+
+`wyze-token-store-lab/wyze-node-adapted/src/index.js`
+
+Le constructeur exige désormais un objet `options.tokenStore` fournissant deux méthodes :
+
+```js
+read()
+write(accessToken, refreshToken)
+```
+
+Le stockage est injecté explicitement dans chaque instance de `Wyze`.
+
+La méthode `getTokens()` utilise désormais :
+
+```js
+const tokens = await this.tokenStore.read()
+```
+
+Si le stockage retourne `null`, les deux propriétés en mémoire sont initialisées à des chaînes vides.
+
+Si le stockage retourne des jetons, les deux propriétés sont renseignées depuis le même objet.
+
+La méthode `setTokens()` utilise désormais :
+
+```js
+await this.tokenStore.write(accessToken, refreshToken)
+```
+
+Les propriétés de l'instance ne sont mises à jour qu'après confirmation de l'écriture.
+
+Les deux appels à `setTokens()` dans `login()` et `getRefreshToken()` ont également été modifiés pour attendre leur exécution avec `await`.
+
+L'interface publique de la bibliothèque est conservée :
+
+```js
+module.exports = Wyze
+```
+
+### 18.7 Contrôles déjà effectués sur l'adaptation
+
+Contrôle syntaxique :
+
+```bash
+node --check wyze-token-store-lab/wyze-node-adapted/src/index.js
+```
+
+Résultat : aucune erreur de syntaxe.
+
+Contrôle des appels :
+
+```bash
+grep -nE 'getTokens\(' wyze-token-store-lab/wyze-node-adapted/src/index.js
+```
+
+Résultat :
+- 19 appels à `getTokens()` ;
+- les 19 appels utilisent `await`.
+
+Contrôle de l'ancien stockage :
+
+```bash
+grep -RInE 'node-localstorage|LocalStorage|localStorage' \
+  wyze-token-store-lab/wyze-node-adapted \
+  --exclude-dir=node_modules
+```
+
+Résultat :
+
+La seule occurrence restante est la déclaration de dépendance dans :
+
+`wyze-token-store-lab/wyze-node-adapted/package.json`
+
+La dépendance `node-localstorage` n'a donc pas encore été retirée de `package.json`, mais aucun usage correspondant ne subsiste dans le code de la copie adaptée.
+
+Le diff avec la source originale confirme que les changements sont limités :
+- suppression de l'initialisation de `node-localstorage` ;
+- injection obligatoire de `tokenStore` ;
+- lecture et écriture asynchrones ;
+- attente des deux opérations d'écriture.
+
+### 18.8 État exact au point de reprise
+
+**Réalisé :**
+- sauvegarde des sources originales ;
+- création de la copie adaptée ;
+- prototype TokenStore ;
+- 8 tests du prototype réussis ;
+- adaptation de `src/index.js` ;
+- contrôle syntaxique réussi ;
+- vérification des 19 appels asynchrones ;
+- vérification de l'absence d'utilisation de l'ancien stockage dans le code adapté.
+
+**Non réalisé :**
+- suppression de `node-localstorage` dans `package.json` ;
+- installation ou résolution des dépendances dans la copie adaptée ;
+- test d'intégration entre `Wyze` et `TokenStore` ;
+- tests de concurrence entre processus ;
+- validation complète des permissions et du verrou ;
+- test de connexion Wyze avec cette adaptation ;
+- déploiement sur SERVOR.
+
+Aucun appel réseau Wyze n'a été effectué pendant cette adaptation.
+
+Aucun jeton réel ne doit être utilisé pour les tests locaux à venir : employer exclusivement des jetons fictifs.
+
+### 18.9 Prochaines étapes
+
+Ordre de travail recommandé :
+
+1. Retirer `node-localstorage` de `package.json` dans la seule copie adaptée, après vérification des usages.
+2. Vérifier le JSON de `package.json` et l'absence de toute référence résiduelle.
+3. Améliorer les contrôles de sécurité du prototype TokenStore, notamment les permissions du fichier existant.
+4. Examiner et tester le verrou avec plusieurs processus Node.js.
+5. Écrire des tests d'intégration locaux avec un faux `tokenStore` et des jetons fictifs.
+6. Vérifier que le constructeur refuse l'absence de stockage.
+7. Vérifier qu'une erreur d'écriture empêche la mise à jour des jetons en mémoire.
+8. Vérifier que la lecture et l'écriture des deux jetons restent cohérentes.
+9. Réexaminer les chemins de connexion et de renouvellement sans exécuter de requête réseau.
+10. Produire un bilan de sécurité avant toute décision d'utilisation sur SERVOR.
+
+### 18.10 Règles à respecter pour la reprise
+
+- Travailler exclusivement sur le Mac mini pour cette phase.
+- Ne pas modifier `wyze-node-source`.
+- Ne pas modifier les sources du moteur MP4 indépendant.
+- Ne pas installer de dépendance sans nécessité démontrée.
+- Ne pas effectuer de nouvel appel réseau Wyze sans autorisation explicite.
+- Ne pas renouveler les jetons réels sans autorisation explicite.
+- Ne pas afficher ni publier les secrets.
+- Ne pas utiliser les jetons réels dans les tests.
+- Ne pas installer de conteneur ni modifier la production SERVOR.
+- Ne pas considérer le prototype TokenStore comme validé pour la production.
+
+**Conclusion :** l'adaptation de `wyze-node` à un stockage injecté est commencée et passe les contrôles statiques. Le remplacement du stockage historique est effectué dans la copie de travail, mais la validation fonctionnelle et la validation de sécurité restent à réaliser. La bibliothèque adaptée demeure un prototype de laboratoire, sans connexion Wyze ni déploiement sur SERVOR.
