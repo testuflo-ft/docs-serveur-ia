@@ -2371,6 +2371,21 @@ Les trois essais antérieurs de Replay v1 ont renvoyé HTTP 500.
 
 Cette analyse décrit le contrat du code communautaire étudié. Elle ne constitue pas une documentation officielle du protocole Wyze.
 
+#### Précisions sur l'implémentation de `getEventVideoURL()` dans `wyze-node` 2.12.2
+
+L'inspection de `src/index.js`, au commit `d556f1b141af527d79c2916eba199e6209c52cf2`, confirme les détails suivants :
+
+- La fonction `getEventVideoURL(options)` effectue un `POST` vers `https://beta-ams-api.wyzecam.com/api/v1/kinesis/replay_url/get`.
+- Le corps contient notamment `device_mac`, `device_model`, `begin_time`, `end_time`, `expires` (4000 par défaut) et `max_manifest_fragment` (1000).
+- La construction du corps reprend le mécanisme commun `getRequestBodyData()`, puis remplace les champs `sc` et `sv` par les valeurs propres à Replay v1.
+- Le jeton d'accès est transmis dans le corps de la requête, et non dans un en-tête `Authorization` dans cette implémentation.
+- En cas de réponse reconnue comme une erreur de jeton, la bibliothèque renouvelle le jeton puis recommence l'appel.
+- La fonction renvoie directement `result.data`. Elle ne vérifie pas que cette réponse contient un manifeste DASH, ne télécharge aucun fragment vidéo et ne construit aucun fichier MP4.
+
+**Portée de cette observation :** cette implémentation documente une voie Replay v1 distincte des appels Replay v4 décrits dans `dishcam` et par Casey Ellis. Elle ne fournit donc pas le schéma de requête nécessaire pour appeler le Replay v4 de GW_BE1, et ne démontre pas la compatibilité de Replay v1 avec les ressources KVS v3 observées dans notre capture.
+
+Source : [`noelportugal/wyze-node/src/index.js`, commit `d556f1b`](https://github.com/noelportugal/wyze-node/blob/d556f1b141af527d79c2916eba199e6209c52cf2).
+
 #### 19.3.2 Pistes communautaires récentes sur `/app/v4/replay_url`
 
 Deux implémentations communautaires apportent des informations complémentaires, mais ne permettent pas encore d'établir un contrat unique pour cette route.
@@ -2442,6 +2457,170 @@ La récupération d'un manifeste DASH par `/app/v4/replay_url` est rapportée co
 La compatibilité avec la GW_BE1, la ressource KVS version 3 de notre événement et les paramètres exacts nécessaires restent à établir.
 
 Aucun nouvel appel réseau Wyze n'a été effectué dans le cadre de cette analyse documentaire.
+
+#### 19.3.2.1 — Analyse détaillée de `dishcam` : portée réelle de Replay v4
+
+L'examen du code source et de l'historique du dépôt `eliwjones/dishcam` permet de préciser ce que cette implémentation démontre réellement.
+
+**Appel Replay v4**
+
+Dans `util/wyze.py`, la fonction `dash_mpd()` construit une requête :
+
+- méthode : `GET` ;
+- endpoint : `https://kvs-service.wyzecam.com/app/v4/replay_url` ;
+- en-tête : `Authorization` contenant directement le jeton d'accès ;
+- paramètres : `device_id`, `product_model`, `start_time`, `end_time`, `resource_type=kvs`, `resource_version=0` et `is_live=false`.
+
+La fonction décode la réponse JSON et retourne directement `resp_json["data"]`. Elle ne vérifie pas le type ni la structure de cette valeur.
+
+Le nom `dash_mpd()` et l'annotation `-> str` ne constituent donc pas une preuve que la réponse contient effectivement un manifeste MPD.
+
+**Authentification et récupération des événements**
+
+Le même fichier utilise :
+- `POST /api/user/login` sur `auth-prod.api.wyze.com`, avec les en-têtes `KeyId` et `ApiKey`, pour obtenir les jetons ;
+- `POST /app/v2/device/get_event_list` sur `api.wyzecam.com` pour récupérer les événements.
+
+Il s'agit d'un parcours API développeur particulier. Il ne démontre pas que ces mêmes jetons sont acceptés dans tous les contextes Replay KVS.
+
+**Traitement dans le programme principal**
+
+Dans `dishcam.py`, le programme :
+- télécharge une image JPG issue de `file_list` pour l'analyse par Gemini ;
+- appelle `dash_mpd()` lorsqu'une transition d'événement est détectée ;
+- affiche la valeur retournée sous le libellé `MPD` ;
+- conserve les horodatages de la transition dans son état local.
+
+Il ne télécharge toutefois pas le manifeste retourné, ne traite pas les segments vidéo et ne reconstitue pas de fichier MP4.
+
+**Évolution historique**
+
+Le commit `615ccf8bc3c8831df046be986f0267b8c772482a`, daté du 13 juin 2025, remplace dans `util/wyze.py` :
+- `video_file_ids()` et `save_mp4()` ;
+- par `kvs_times()` et `dash_mpd()`.
+
+Le changement introduit donc l'appel Replay v4 et l'extraction des horodatages KVS, mais ne fournit pas une chaîne complète de récupération et de reconstruction vidéo.
+
+Sources :
+- [Code `util/wyze.py`, commit 75b41d5](https://github.com/eliwjones/dishcam/blob/75b41d5f3df285024da5be775442799beb43db0a/util/wyze.py)
+- [Code `dishcam.py`, commit 75b41d5](https://github.com/eliwjones/dishcam/blob/75b41d5f3df285024da5be775442799beb43db0a/dishcam.py)
+- [Diff du commit 615ccf8](https://github.com/eliwjones/dishcam/commit/615ccf8bc3c8831df046be986f0267b8c772482a)
+
+**Conclusion pour notre audit**
+
+`dishcam` confirme l'existence d'un appel public à Replay v4, avec une authentification par jeton et des paramètres KVS. Mais son exemple utilise `resource_version=0`, alors que notre capture GW_BE1 expose une ressource KVS v3.
+
+Il ne démontre ni la compatibilité de Replay v4 avec cette ressource v3, ni le format réel de la réponse, ni la récupération du clip vidéo.
+
+Le point bloquant reste donc inchangé : obtenir une preuve documentaire ou expérimentale du traitement d'une ressource KVS v3 pour la GW_BE1.
+
+#### 19.3.2.2 — Comparaison avec le parcours Replay v4 décrit par Casey Ellis
+
+L'article de Casey Ellis, publié le 3 mai 2026, décrit une seconde implémentation de récupération des clips Wyze, sensiblement différente de celle de `dishcam`.
+
+Source : [Continued Monitoring of the Situation — Casey Ellis, 3 mai 2026](https://cje.io/2026/05/04/continued-monitoring-of-the-situation/).
+
+**Parcours rapporté par l'auteur**
+
+1. Authentification par `POST` vers `auth.wyze.com/oauth/token`, avec adresse e-mail, mot de passe MD5 et code TOTP éventuel lorsque la double authentification est activée.
+2. Recherche des événements par `POST /app/v4/device/get-event-list`.
+3. Pour chaque événement, appel par `POST /app/v4/replay_url` afin d'obtenir un manifeste DASH signé.
+4. Transmission immédiate du manifeste à FFmpeg pour récupérer les segments et assembler un fichier MP4 avant expiration de la session.
+5. Copie du fichier obtenu vers le NAS avec `scp`.
+
+L'auteur indique que les sessions AWS Kinesis Video Streams utilisées pour la lecture expirent au bout de 5 à 15 minutes. Il rapporte également que Cam Plus était nécessaire dans son environnement : les comptes gratuits recevaient un tableau vide en réponse à `replay_url`.
+
+Ces indications sont des observations publiées par l'auteur, et non des garanties générales concernant tous les modèles ou comptes Wyze.
+
+**Différences avec `dishcam`**
+
+| Élément | `dishcam` | Casey Ellis |
+|---|---|---|
+| Authentification | `POST /api/user/login` | `POST /oauth/token` |
+| Identifiants | `KeyId`, `ApiKey` et mot de passe | E-mail, mot de passe MD5, TOTP éventuel |
+| Recherche d'événements | `POST /app/v2/device/get_event_list` | `POST /app/v4/device/get-event-list` |
+| Replay | `GET /app/v4/replay_url` | `POST /app/v4/replay_url` |
+| Ressource | `resource_type=kvs`, `resource_version=0` | Paramètres exacts non publiés |
+| Résultat décrit | Retour direct de `data` | Manifeste DASH signé |
+| Traitement vidéo | Pas de téléchargement du clip dans le code étudié | FFmpeg récupère les segments et produit un MP4 |
+
+**Limites documentaires**
+
+L'article de Casey Ellis ne fournit pas :
+- le corps JSON exact de la requête Replay ;
+- les en-têtes HTTP complets ;
+- l'hôte complet utilisé pour les deux routes v4 ;
+- un exemple brut de réponse Replay ;
+- le contenu du manifeste DASH ;
+- les paramètres exacts transmis à FFmpeg.
+
+Il n'est donc pas possible de déterminer si les deux implémentations utilisent le même backend, si le `POST` est obligatoire ou si le `GET` de `dishcam` correspond à une autre variante du service.
+
+La valeur `resource_version` utilisée par Casey n'est pas indiquée. Sa compatibilité avec la ressource KVS v3 observée sur notre GW_BE1 reste inconnue.
+
+**Conséquence pour notre audit**
+
+La différence `GET` / `POST` sur `/app/v4/replay_url` devient une question technique prioritaire. Il faut également distinguer :
+- le jeton d'authentification Wyze utilisé pour demander la lecture ;
+- les éventuels jetons de session Kinesis Video Streams utilisés ensuite pour accéder au manifeste et aux segments.
+
+L'article suggère que ces deux niveaux d'accès existent dans le parcours décrit, mais ne fournit pas assez de détails pour en reconstruire les échanges.
+
+**Conclusion :** Casey Ellis rapporte une chaîne complète allant de l'authentification à la production d'un MP4. Contrairement à `dishcam`, son implémentation ne s'arrête pas à la valeur retournée par Replay v4. Toutefois, aucun élément ne démontre encore que cette méthode fonctionne avec notre GW_BE1 et sa ressource KVS v3.
+
+#### 19.3.2.3 — Vérification de l'état actuel et de l'historique de dishcam
+
+Une nouvelle inspection de la branche `main` du dépôt `eliwjones/dishcam` confirme que l'implémentation Replay v4 examinée précédemment est toujours celle utilisée.
+
+Dans `util/wyze.py` :
+- `dash_mpd()` construit une requête `GET` vers `https://kvs-service.wyzecam.com/app/v4/replay_url`.
+- Les paramètres transmis comprennent `device_id`, `product_model`, `start_time`, `end_time`, `resource_type=kvs`, `resource_version=0` et `is_live=false`.
+- Le jeton d'accès est transmis dans l'en-tête `Authorization`.
+- La fonction décode la réponse JSON et renvoie directement `resp_json["data"]`.
+
+Dans `dishcam.py`, le résultat est affiché sous l'étiquette `MPD`, puis les horaires de la séquence sont enregistrés dans l'état du programme. Aucun traitement ultérieur du résultat n'est effectué : pas de lecture du manifeste, pas de téléchargement de fragments DASH et pas de reconstruction MP4.
+
+L'historique du fichier `util/wyze.py` montre :
+- le 13 juin 2025, commit `615ccf8` : introduction de la fonction `dash_mpd()` et transition vers Replay v4 ;
+- le 14 juin 2025, commit `80cf364` : suppression de la dépendance `requests`, sans changement documenté du mécanisme Replay.
+
+**Limite de compatibilité avec notre capture :** la ressource KVS observée pour GW_BE1 est de version 3, tandis que `dishcam` transmet explicitement `resource_version=0`. Aucun résultat de test ni exemple de réponse dans ce dépôt ne démontre que cette requête permet de récupérer une ressource KVS v3.
+
+**Conclusion :** `dishcam` constitue une preuve documentaire de l'utilisation d'une route Replay v4 et de la construction d'une requête KVS, mais pas une preuve de récupération effective d'un clip vidéo. Son paramètre `resource_version=0` ne doit pas être transposé à notre événement GW_BE1 sans preuve de compatibilité.
+
+Sources :
+- https://github.com/eliwjones/dishcam/blob/main/util/wyze.py
+- https://github.com/eliwjones/dishcam/blob/main/dishcam.py
+- https://github.com/eliwjones/dishcam/commit/615ccf8bc3c8831df046be986f0267b8c772482a
+- https://github.com/eliwjones/dishcam/commit/80cf364e16c11034476618f7b1ac21ac87ea8ab4
+
+  #### 19.3.2.4 — Architecture KVS documentée par AWS et distinction avec la récupération des événements
+
+Un document d'architecture AWS consacré à Wyze décrit le fonctionnement général de la vidéo événementielle Kinesis Video Streams :
+
+1. La caméra obtient ses certificats KVS auprès du Device Gateway.
+2. Elle se connecte à KVS et y envoie son flux.
+3. L'application demande à l'App Gateway une URL DASH à partir du jeton utilisateur.
+4. L'App Gateway génère l'URL de lecture KVS.
+5. L'application télécharge l'audio et la vidéo depuis KVS.
+
+Cette architecture confirme que la génération de l'URL de lecture et le téléchargement du média sont deux opérations distinctes. Elle ne documente cependant ni les routes HTTP v4, ni le format exact des requêtes, ni le paramètre `resource_version`.
+
+Une vérification complémentaire de `mrlt8/docker-wyze-bridge` montre que son mécanisme d'événements v4 utilise `post_device(..., "get_event_list", ..., api_version=4)`. Les événements sont ensuite exploités à partir de `event_list` et de `file_list`, notamment pour récupérer les miniatures et signaler les mouvements.
+
+Cette implémentation ne constitue pas une preuve d'utilisation de `/app/v4/replay_url` : le code examiné ne met pas en œuvre la récupération des clips événementiels par cette route.
+
+**Conséquence pour notre investigation :** il faut conserver trois opérations distinctes :
+- récupération de la liste des événements ;
+- récupération des miniatures associées ;
+- génération de l'URL Replay puis téléchargement des médias KVS.
+
+La réussite de la première ou de la deuxième opération ne démontre pas la faisabilité de la troisième.
+
+**Sources :**
+- https://d1.awsstatic.com/whitepapers/lot-smart-home-solution.pdf
+- https://github.com/mrlt8/docker-wyze-bridge/blob/main/app/wyzebridge/wyze_api.py
+- https://github.com/mrlt8/docker-wyze-bridge/blob/main/app/wyzebridge/wyze_events.py
 
 ### 19.4 Ce que l'analyse d'Optimyze permet désormais d'affirmer
 
