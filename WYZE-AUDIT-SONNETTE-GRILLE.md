@@ -4,7 +4,7 @@
 
 Document de référence technique — Projet d'archivage local des événements vidéo Wyze.
 - **Statut global :** audit exploratoire en cours ; événement GW_BE1 du 23 novembre identifié avec ressource KVS v3 ; analyse statique d'Optimyze approfondie ; récupération et reconstruction d'un véritable clip Wyze non encore démontrées.
-- **Dernière mise à jour :** 25 novembre 2026 — identification de la ressource KVS v3 de l'événement cible ; reconstitution détaillée de la chaîne de lecture DASH d'Optimyze ; verrou de récupération autonome sans navigateur précisé.
+- **Dernière mise à jour :** 25 novembre 2026 — identification de la ressource KVS v3 de l'événement cible ; reconstitution détaillée de la chaîne de lecture DASH d'Optimyze ; verrou de récupération autonome sans navigateur précisé ; audit indépendant du moteur MP4 Phase 5.
 - **NAS cible :** Synology SERVOR — DSM 7.4.1-90080 — x86_64.
 - **Caméra pilote :** Wyze Video Doorbell Pro — « Sonnette Grille ».
 - **Modèle :** GW_BE1.
@@ -2843,3 +2843,206 @@ Les éléments examinés conduisent aux conclusions suivantes :
 L'examen des projets communautaires a fait ressortir plusieurs éléments distincts :
 
 - `docker-wyze-bridge` documente des mécanismes liés à l'API Wyze, notamment l'utilisation d'une API Key
+
+## 20. Audit indépendant du moteur MP4 — Phase 5 — 25 novembre 2026
+
+### 20.1 Objet et périmètre
+
+Un audit indépendant a été réalisé sur le candidat du moteur MP4, avec pour objectif d'examiner les corrections A4, A5, A9 et A10, puis de rechercher d'éventuelles régressions ou anomalies supplémentaires.
+
+L'audit porte exclusivement sur le code du moteur et sur des données synthétiques :
+- fixture fournie avec le candidat ;
+- fragments générés avec FFmpeg ;
+- mutations binaires déterministes et aléatoires ;
+- comparaisons différentielles entre le candidat et la version originale.
+
+**Aucun fragment Wyze/KVS réel n'a été utilisé.** La compatibilité du moteur avec les fragments de la Sonnette Grille GW_BE1 n'est donc toujours pas démontrée.
+
+L'audit n'a entraîné :
+- aucune modification des fichiers fournis ;
+- aucune suppression de test ;
+- aucune modification de l'environnement de production ;
+- aucune recommandation de déploiement.
+
+### 20.2 Environnement et intégrité des livrables
+
+Environnement utilisé pour l'audit indépendant :
+- Node.js : 22.23.5 ;
+- FFmpeg / FFprobe : 6.1.1.
+
+Versions annoncées pour le candidat :
+- Node.js : 22.16.0 ;
+- FFmpeg : 7.1.5.
+
+Les versions d'environnement ne sont donc pas strictement identiques à celles annoncées pour le candidat. Cette différence doit être conservée comme réserve de reproductibilité.
+
+Le rapport indique que le contrôle d'intégrité des fichiers fournis avec `sha256sum -c SHA256SUMS.txt` n'a relevé aucune ligne en échec.
+
+Livrables de l'audit :
+- `RAPPORT-AUDIT-INDEPENDANT.md`
+- `mp4-engine-phase5-independent-audit.zip`
+
+SHA-256 de l'archive ZIP reçue :
+
+`8597a4021077008f7a2c2a7a51e2022d40203699c023bdb9236012a644d9f0a0`
+
+Le rapport détaillé et l'archive constituent les pièces justificatives de cette synthèse. Ils doivent être conservés avec les éléments de laboratoire correspondants.
+
+### 20.3 Résultat des quatre corrections examinées
+
+| Correction | Résultat de l'audit indépendant | Réserves |
+|---|---|---|
+| A4 — Bornes ISO BMFF | Corrigée dans les cas testés | Tailles minimales de certaines boîtes encore trop permissives |
+| A5 — Plages d'échantillons | Corrigée avec les options par défaut | Anomalies F1 à F4 |
+| A9 — Budget mémoire des `trun` | Correction efficace contre l'amplification mémoire testée | Plafond par défaut de 16 384 échantillons |
+| A10 — Débordement de pile du constructeur | Corrigée jusqu'à 2 000 000 d'échantillons dans les essais | Consommation mémoire élevée et oracle de test initial insuffisant |
+
+**A4 — Bornes ISO BMFF**
+
+L'audit différentiel ne relève plus de lecture hors boîte sur les cibles examinées : `mvhd`, `tkhd`, `mdhd`, `hdlr`, `stsd`, entrées d'échantillons et `trex`.
+
+L'original présentait des lectures hors boîte sur `mvhd`, `tkhd` et `mdhd`.
+
+Réserve résiduelle : certaines boîtes sont acceptées avec une longueur minimale inférieure à celle exigée par leur structure complète. Cette permissivité peut conduire à accepter des métadonnées partielles, sans lecture hors boîte.
+
+**A5 — Plages d'échantillons**
+
+Avec les options par défaut, les plages d'échantillons sont contrôlées par rapport aux zones de données `mdat`.
+
+Sur 4 000 mutations de `moof` :
+- candidat : aucune plage hors `mdat` acceptée ;
+- original : 187 plages hors `mdat` acceptées.
+
+La désactivation de `validateDataRanges` supprime cependant également les contrôles élémentaires de bornes du buffer. Ce comportement est détaillé en F4.
+
+**A9 — Budget mémoire des métadonnées**
+
+Une entrée d'environ 116 octets déclarant 1 000 000 d'échantillons est rejetée rapidement par le candidat avec un tas limité à 48 Mo.
+
+L'original échoue par épuisement mémoire dans le même scénario.
+
+Le plafond par défaut du candidat est de 16 384 échantillons par `moof`. Un fragment de 20 000 échantillons accepté par l'original est donc rejeté par défaut par le candidat.
+
+**A10 — Débordement de pile**
+
+Le candidat a accepté jusqu'à 2 000 000 d'échantillons dans les scénarios testés, avec une consommation mémoire mesurée d'environ 926 Mo RSS.
+
+L'original déborde dès 125 000 échantillons dans le scénario correspondant.
+
+Le contrôle FFprobe a retrouvé le nombre attendu de paquets et les durées attendues dans les cas examinés. Le test de sécurité initial du candidat reste toutefois insuffisant, car il ne vérifie pas directement la cohérence des tables et le nombre de paquets reconstruits.
+
+### 20.4 Anomalies nouvelles relevées
+
+L'audit indépendant a identifié quatre anomalies de gravité moyenne, principalement liées au parseur de fragments.
+
+| Référence | Gravité | Description |
+|---|---|---|
+| F1 | Moyenne | `parseMoof` réanalyse toutes les boîtes du buffer à chaque appel |
+| F2 | Moyenne | La limite `maxBoxes` du scan global peut affecter un appel local à `parseMoof` |
+| F3 | Moyenne | Une queue tronquée après un `moof` valide provoque désormais le rejet de l'ensemble |
+| F4 | Moyenne, optionnelle | `validateDataRanges:false` désactive aussi les contrôles de bornes du buffer |
+
+**F1 — Coût par appel**
+
+`parseMoof` réanalyse les boîtes top-level du buffer à chaque appel.
+
+Dans le scénario de 5 000 fragments :
+- candidat : environ 5,23 secondes ;
+- original : environ 0,04 seconde.
+
+Cette différence constitue un risque de performance lorsque le nombre de fragments augmente.
+
+**F2 — Couplage à `maxBoxes`**
+
+Un buffer contenant 60 000 fragments, soit 120 000 boîtes, peut être analysé lors d'un scan global avec une limite relevée, puis être rejeté par un appel à `parseMoof` utilisant la limite par défaut de 100 000.
+
+Un fragment valide peut donc être affecté par le nombre d'autres boîtes présentes dans le buffer.
+
+**F3 — Queue tronquée**
+
+Un `moof` et son `mdat` complets, suivis d'un en-tête de boîte tronqué, sont acceptés par l'original mais rejetés par le candidat.
+
+Le rejet est explicite et ne correspond pas à une corruption silencieuse. Il constitue néanmoins un changement de comportement non annoncé dans le CHANGELOG.
+
+Son impact sur des captures réellement interrompues ou tronquées reste une hypothèse : aucun fragment Wyze n'a été testé.
+
+**F4 — Désactivation des contrôles de plages**
+
+Avec `validateDataRanges:false`, les cas suivants sont acceptés :
+- offset situé dans le `moof` ;
+- offset au-delà du buffer ;
+- offset négatif.
+
+Les données extraites peuvent alors être vides ou tronquées sans erreur.
+
+Ce comportement est associé à une option de désactivation explicite et n'est pas une régression par rapport à l'original. L'audit recommande néanmoins de conserver au minimum les contrôles de bornes du buffer, même lorsque la validation stricte des plages dans `mdat` est désactivée.
+
+### 20.5 Autres observations et réserves
+
+L'audit relève également :
+
+- **F5 — Faible à moyenne :** plafond par défaut de 16 384 échantillons par `moof`, pouvant rejeter certains fragments légitimes plus volumineux.
+- **F6 — Faible :** message d'erreur indiquant le budget restant plutôt que la limite totale.
+- **F7 — Faible :** absence de budget spécifique pour les très nombreux `traf` et `trun` vides ; aucun risque concret n'a été mesuré.
+- **F8 — Faible :** consommation mémoire importante du constructeur, environ 926 Mo RSS à 2 millions d'échantillons.
+- **F9 — Faible :** oracle du test de sécurité A10 initial trop faible pour vérifier complètement la reconstruction.
+- **R-A4-1 — Faible :** longueurs minimales acceptées trop permissives pour plusieurs boîtes ISO BMFF.
+- **R-A4-2 — Faible, préexistant :** acceptation d'une boîte de taille zéro au milieu d'un conteneur, alors que cette forme devrait être réservée à la dernière boîte.
+
+Les corrections A1, A2, A3, A6, A7, A8 et A11 sont restées inchangées dans les comparaisons effectuées. Elles ne doivent pas être considérées comme corrigées par cet audit.
+
+### 20.6 Résultats de non-régression
+
+Selon le rapport d'audit indépendant :
+
+| Contrôle | Résultat |
+|---|---:|
+| Tests du candidat | 31/31 réussis |
+| Tests de l'original | 18/18 réussis |
+| Entrées aléatoires du constructeur | 379 sorties identiques sur 400 |
+| Rejets du constructeur | 21 avec les mêmes messages |
+| Mutations du parseur d'initialisation | 4 000, aucune divergence |
+| Fragments synthétiques FFmpeg | 11 cas comparés |
+| Reconstruction des fragments FFmpeg | Octet-identique à l'original |
+| Comparaison des trames décodées | `framemd5` identiques |
+
+Les cas FFmpeg comprennent notamment des configurations audio/vidéo, B-frames, HEVC, Opus, PCM et HLS fMP4.
+
+Ces résultats sont ceux rapportés par l'audit indépendant. Ils ne constituent pas une reproduction sur des médias Wyze.
+
+### 20.7 Limites et décisions encore en attente
+
+Les essais n'ont pas couvert :
+- des fragments KVS réellement fournis par Wyze ;
+- la compatibilité avec l'événement GW_BE1 du 23 novembre ;
+- les entrées d'échantillons multiples ;
+- les fragments non ordonnés ou dupliqués ;
+- les cas SDI ;
+- les flux chiffrés ou auxiliaires ;
+- la synchronisation audio/vidéo sur de longues durées.
+
+Trois décisions de conception issues de l'audit précédent restent également sans réponse :
+
+1. Politique à adopter pour les trous dans les plages de données.
+2. Gestion des offsets de piste : prise en charge de `elst` ou normalisation.
+3. Politique de prise en charge des entrées d'échantillons multiples.
+
+Ces décisions ne sont pas considérées comme résolues par le présent audit.
+
+### 20.8 Conclusion et statut
+
+**Résultat : audit indépendant Phase 5 terminé sur données synthétiques.**
+
+Les corrections A4, A5, A9 et A10 résistent aux scénarios examinés. Les résultats de non-régression sont favorables dans le périmètre couvert.
+
+Les anomalies F1 à F4 doivent néanmoins rester inscrites au suivi technique du candidat. Les autres réserves F5 à F9 et R-A4-1/R-A4-2 doivent également être conservées.
+
+Cet audit ne démontre pas :
+- la compatibilité du moteur avec les fragments KVS v3 de la GW_BE1 ;
+- la récupération autonome d'un manifeste DASH Wyze ;
+- la reconstruction correcte d'un clip réel de la sonnette ;
+- l'aptitude du candidat à être déployé en production.
+
+**Décision :** conserver le candidat et le rapport dans le laboratoire. Ne pas considérer les résultats comme une validation de production et ne procéder à aucun déploiement sur SERVOR sur la seule base de cet audit.
+
+La priorité du projet Wyze reste l'obtention d'une ressource de lecture KVS v3 exploitable pour l'événement réel, sans dépendance au lecteur Web Wyze. Les investigations complémentaires sur le moteur MP4 ne doivent pas détourner le travail de ce verrou technique tant qu'aucun fragment réel n'est disponible.
