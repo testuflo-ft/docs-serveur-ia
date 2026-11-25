@@ -2261,7 +2261,7 @@ Le champ `event_resources` contient deux ressources distinctes :
 
 Autres observations :
 
-- `file_params` est absent ou nul pour l'événement dans la capture examinée.
+- file_params est un objet vide dans la ressource S3 v0 et dans l'entrée correspondante de file_list. Ce champ est absent de l'objet KVS v3.
 - Une ressource KVS version 3 est donc explicitement associée à l'événement.
 - Un examen complémentaire de la ressource KVS a indiqué `is_playable: true`.
 - La ressource KVS v3 ne doit pas être assimilée à l'ancienne ressource Replay v1 ni à une ressource KVS version 0.
@@ -2452,22 +2452,51 @@ Avant tout téléchargement effectif, les informations obtenues devront être pr
 **Conclusion au 25 novembre 2026 :** l'événement réel et sa ressource KVS v3 sont identifiés. Le fonctionnement interne d'Optimyze est désormais suffisamment compris pour écarter l'hypothèse d'un téléchargeur autonome fondé uniquement sur l'identifiant d'événement. La récupération d'un manifeste KVS v3 sans navigateur reste le verrou technique principal. Aucun clip Wyze réel n'a encore été récupéré et aucune modification de production n'a été effectuée.
 
 
-### 19.8 Clôture de l'étape — inspection de la capture et contrat Replay v1
 
-L'inspection locale de la capture `event-list-20261123T150802690Z.json` est terminée.
+### 19.8 Clôture de l'étape — inspection de la capture et analyse de Replay v1
 
-Les vérifications ont confirmé :
+L'inspection complémentaire de la capture locale `event-list-20261123T150802690Z.json` est terminée.
 
-- la structure racine de la réponse : `code`, `data`, `msg`, `traceId` et `ts` ;
-- la présence des quatre événements sous `data.event_list` ;
-- l'homogénéité de leurs deux ressources S3 v0 et KVS v3 ;
-- l'absence de `file_id`, d'URL et de `file_params` dans les objets KVS v3 ;
-- la présence de `is_playable: true` et des bornes temporelles pour chaque ressource KVS v3.
+La structure racine de la réponse a été identifiée :
 
-L'analyse de `getEventVideoURL()` dans `wyze-node` 2.12.2 a également précisé le contrat de l'ancien Replay v1 et révélé son mécanisme de renouvellement automatique en cas d'erreur de jeton.
+- `code`
+- `data`
+- `msg`
+- `traceId`
+- `ts`
 
-**Résultat de l'étape :** la structure des ressources de l'événement et le fonctionnement de l'ancien Replay v1 sont suffisamment documentés. Aucune information supplémentaire exploitable pour obtenir directement le manifeste KVS v3 n'a été trouvée dans cette capture.
+Les quatre événements présents dans `data.event_list` ont été examinés. Ils présentent tous le même profil de ressources :
 
-Aucun nouvel appel réseau Wyze n'a été effectué pendant cette étape. Aucun jeton n'a été renouvelé et aucun clip n'a été téléchargé.
+- une ressource S3 version 0, avec `required: true`, `type: 1`, `status: 2`, `is_ai: 0`, un `file_id` et une URL ;
+- une ressource KVS version 3, avec `required: true`, `is_playable: true`, `begin_time` et `end_time`, sans `file_id`, URL ni `file_params` ;
+- `ScanFrameNumber` vaut 0 dans les quatre événements.
 
-**Étape terminée.** La prochaine étape, distincte, sera l'étude documentaire du contrat de `/app/v4/replay_url` et de sa compatibilité éventuelle avec la GW_BE1 et `resource_version: 3`. Elle ne commencera qu'après reprise explicite du travail.
+Les durées des ressources KVS v3 sont respectivement de 20, 15, 15 et 12 secondes.
+
+Cette comparaison confirme l'homogénéité du profil observé dans les quatre événements. Elle ne démontre pas que la ressource S3 contient le clip vidéo complet ni qu'elle permet de récupérer la ressource KVS.
+
+L'analyse de `getEventVideoURL(options)` dans `wyze-node` 2.12.2 a également permis de préciser le contrat de l'ancien Replay v1 :
+
+- POST vers `/api/v1/kinesis/replay_url/get` sur `beta-ams-api.wyzecam.com` ;
+- paramètres de caméra, de plage temporelle et paramètres Replay v1 ;
+- ajout des informations de session par `getRequestBodyData()` ;
+- renouvellement automatique du jeton et nouvel essai en cas d'erreur de jeton.
+
+Cette méthode ne transmet pas explicitement `resource_type`, `resource_version` ou `event_id`. Elle ne démontre donc pas la récupération de notre ressource KVS v3.
+
+Les trois essais antérieurs de Replay v1 ont renvoyé HTTP 500. Aucune nouvelle tentative n'a été effectuée.
+
+**Bilan de l'étape :**
+
+- structure de la capture et des quatre événements documentée ;
+- distinction S3 v0 / KVS v3 confirmée ;
+- contrat de l'ancien Replay v1 précisé ;
+- aucun nouvel appel réseau Wyze ;
+- aucun renouvellement de jeton ;
+- aucun téléchargement de clip.
+
+**Étape terminée.**
+
+La prochaine étape sera l'étude documentaire du contrat de `/app/v4/replay_url`, avec pour objectif de déterminer si une récupération autonome de la ressource KVS v3 de la GW_BE1 est techniquement envisageable.
+
+Cette recherche ne commencera qu'à la reprise explicite du travail et restera soumise aux règles d'autorisation de la section 19.7.
