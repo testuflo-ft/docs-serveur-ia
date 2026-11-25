@@ -3,9 +3,8 @@
 # Audit Wyze — Sonnette Grille
 
 Document de référence technique — Projet d'archivage local des événements vidéo Wyze.
-
-- **Statut global :** audit exploratoire en cours ; moteur MP4 validé sur médias synthétiques ; récupération d'un véritable clip Wyze non encore démontrée.
-- **Dernière mise à jour :** 23 novembre 2026 — adaptation expérimentale de wyze-node à un TokenStore injecté sur le Mac mini ; validation statique uniquement, tests fonctionnels à venir. validation des phases 1 à 5 d'un moteur MP4 indépendant sur le Mac mini ; approfondissement de l'analyse statique d'Optimyze.
+- **Statut global :** audit exploratoire en cours ; événement GW_BE1 du 23 novembre identifié avec ressource KVS v3 ; analyse statique d'Optimyze approfondie ; récupération et reconstruction d'un véritable clip Wyze non encore démontrées.
+- **Dernière mise à jour :** 25 novembre 2026 — identification de la ressource KVS v3 de l'événement cible ; reconstitution détaillée de la chaîne de lecture DASH d'Optimyze ; verrou de récupération autonome sans navigateur précisé.
 - **NAS cible :** Synology SERVOR — DSM 7.4.1-90080 — x86_64.
 - **Caméra pilote :** Wyze Video Doorbell Pro — « Sonnette Grille ».
 - **Modèle :** GW_BE1.
@@ -940,6 +939,202 @@ Les offsets et les signatures de ce document concernent exclusivement le `conten
 
 Toute nouvelle version de l'extension devra faire l'objet d'une nouvelle vérification. Les noms et positions observés dans la version 0.5.1 ne doivent pas être supposés stables.
 
+
+#### 4.3.5 Reconstitution détaillée de la chaîne de lecture DASH — 25 novembre 2026
+
+Une analyse complémentaire de `content.js` a permis de préciser comment Optimyze obtient les URL de lecture et comment il exploite le manifeste DASH.
+
+Cette analyse est fondée sur le fichier local identifié en section 4.3. Les recherches ont porté sur toutes les occurrences de `manifestUrl`, `mediaTemplate` et `initTemplate`, sur le gestionnaire des messages `__wyzeDownloader` et sur les fonctions de traitement du manifeste.
+
+Aucun script de l'extension n'a été exécuté. Aucune requête Wyze n'a été effectuée dans le cadre de cette analyse.
+
+##### 4.3.5.1 Classification des requêtes interceptées
+
+Le gestionnaire de messages de `content.js` reçoit les URL transmises par `inject.js` avec le marqueur :
+
+`__wyzeDownloader: "url"`
+
+Il analyse le chemin de chaque URL et distingue trois catégories :
+
+| Catégorie | Motif détecté | Information conservée |
+|---|---|---|
+| Manifeste | `getDASHManifest` ou `getMPDManifest` | `manifestUrl` |
+| Fragment média | `getMP4MediaFragment` | `mediaTemplate` |
+| Fragment d'initialisation | `getMP4InitFragment` | `initTemplate` |
+
+Le code utilise les expressions régulières suivantes pour reconnaître les catégories :
+
+```js
+/get(DASH|MPD)Manifest/i
+/getMP4MediaFragment/i
+/getMP4InitFragment/i
+```
+
+Pour les fragments, le gestionnaire récupère également le paramètre `TrackNumber`, lorsqu'il est présent, et l'ajoute à l'ensemble des pistes connues.
+
+Les trois informations ne sont donc pas déduites d'un même objet ni générées uniquement à partir du manifeste : elles sont capturées à partir des requêtes réellement observées pendant la lecture.
+
+##### 4.3.5.2 Association des requêtes au bon événement
+
+Le code ne conserve pas indistinctement toutes les URL observées.
+
+Il tente de rattacher chaque requête à un contexte de lecture pertinent :
+
+- lecteur global ou lecteur actif ;
+- fenêtre modale de lecture ;
+- carte vidéo actuellement chargée ;
+- carte vidéo survolée par le pointeur.
+
+Le code prévoit également un cas ambigu lorsqu'une carte est en cours de chargement et que le pointeur vient d'entrer sur une autre carte.
+
+Cette association est importante : les URL d'un événement ne doivent pas être mélangées avec celles d'un autre événement.
+
+Le gestionnaire conserve un état par contexte, comprenant notamment :
+
+```js
+{
+  manifestUrl: null,
+  mediaTemplate: null,
+  initTemplate: null,
+  tracks: new Set()
+}
+```
+
+Lorsqu'une nouvelle URL de manifeste est adoptée depuis le lecteur, le code réinitialise les deux modèles de fragments, l'ensemble des pistes et l'indicateur d'échec du manifeste. Cela évite de réutiliser les modèles observés pour une lecture précédente.
+
+##### 4.3.5.3 Récupération du manifeste depuis le lecteur
+
+Une seconde voie permet à `content.js` de demander au contexte de la page l'URL courante du lecteur.
+
+Le mécanisme est le suivant :
+
+1. `content.js` envoie un message `ask-src`.
+2. `inject.js` recherche le lecteur vidéo correspondant.
+3. Il tente de lire `player.currentSrc()`.
+4. L'URL est renvoyée avec le marqueur `__wyzeDownloader: "src"`.
+5. `content.js` adopte cette URL comme `manifestUrl` si elle diffère de celle déjà connue.
+
+Lors de cette adoption, `mediaTemplate` et `initTemplate` sont remis à `null`, les pistes sont réinitialisées et l'état d'échec du manifeste est effacé.
+
+Ce mécanisme confirme qu'Optimyze peut obtenir l'URL du manifeste directement depuis le lecteur Wyze, en complément de l'interception des requêtes réseau.
+
+Il ne démontre pas que cette URL peut être obtenue indépendamment du lecteur ou de la session Web View.
+
+##### 4.3.5.4 Analyse du manifeste par `P()`
+
+La fonction `P(e)` est le parseur principal du manifeste DASH.
+
+Elle commence par vérifier la présence de `e.manifestUrl`, puis effectue une requête :
+
+```js
+fetch(n, { credentials: t })
+```
+
+Elle vérifie la réponse HTTP et lit le manifeste comme texte. En cas d'échec de récupération ou de réponse HTTP non valide, elle positionne `manifestFailed` et retourne une liste vide.
+
+Le texte est ensuite analysé avec `DOMParser` en XML.
+
+Le parseur extrait notamment :
+
+- `mediaPresentationDuration` depuis l'élément `MPD` ;
+- `availabilityStartTime`, lorsqu'il est présent ;
+- les éléments `AdaptationSet` ;
+- les éléments `SegmentTemplate` ;
+- l'attribut `media` du modèle de segments ;
+- le `TrackNumber`, lorsqu'il est présent dans l'URL du modèle ;
+- `SegmentTimeline` et le nombre de segments calculé à partir des éléments `S` et de leur répétition `r` ;
+- à défaut de `SegmentTimeline`, une estimation du nombre de segments à partir de `duration`, `timescale` et de la durée de présentation ;
+- `initialization` ;
+- `startNumber` ;
+- `mimeType` ;
+- `audioSamplingRate`, lorsqu'il est disponible.
+
+Les URL relatives du manifeste sont résolues par rapport à l'URL du manifeste.
+
+Pour chaque piste exploitable, la fonction retourne un objet contenant notamment :
+
+- `number` ;
+- `media` ;
+- `init` ;
+- `count` ;
+- `startNumber` ;
+- `mime` ;
+- `sampleRate`.
+
+**Point important :** le parseur ne renseigne pas directement `e.mediaTemplate` ou `e.initTemplate`. Ces deux propriétés proviennent du gestionnaire des requêtes interceptées. Le manifeste fournit une description des pistes et des modèles de segments, tandis que les modèles de fragments observés dans le trafic restent conservés séparément dans l'état du lecteur.
+
+##### 4.3.5.5 Construction et téléchargement des fragments
+
+La fonction `D(e, type, trackNumber, sequenceNumber)` construit une URL de fragment à partir d'une URL déjà observée.
+
+Elle sélectionne :
+
+- `initTemplate` ou `mediaTemplate` selon le type demandé ;
+- le modèle de l'autre type en solution de repli, si nécessaire.
+
+Elle remplace le dernier élément du chemin par :
+
+- `getMP4InitFragment.mp4` pour l'initialisation ;
+- `getMP4MediaFragment.mp4` pour les fragments média.
+
+Elle renseigne ensuite les paramètres `TrackNumber` et, le cas échéant, `SequenceNumber`.
+
+La fonction `R(e, n)` remplace le marqueur `$Number$` dans les modèles DASH par le numéro de séquence demandé. Elle prend également en charge le formatage numérique de type `$Number%0Nd$` et l'échappement `$$`.
+
+La fonction `I(e, ...)` récupère les segments successifs de la piste. Elle utilise le nombre de segments et le numéro de départ fournis par le manifeste, avec une limite de sécurité de 20 000 segments.
+
+La fonction `B(...)` obtient le segment d'initialisation de la piste selon trois possibilités :
+
+1. utiliser directement l'URL `init` extraite du manifeste ;
+2. réutiliser le premier fragment média si celui-ci contient déjà une boîte `moov` ;
+3. construire une URL d'initialisation à partir d'un modèle de fragment déjà observé.
+
+Le dernier cas dépend donc de la capture préalable d'une URL de fragment.
+
+##### 4.3.5.6 Dépendance à la session du navigateur
+
+Les fonctions de récupération utilisent `fetch()` avec le mode `credentials` défini dans le script.
+
+Le code prévoit également des mécanismes de reprise et de gestion des erreurs HTTP, notamment pour les réponses 401 et 403. Certaines récupérations utilisent `cache: "no-store"`.
+
+Le téléchargement dépend donc du contexte d'authentification et des possibilités de requête offertes par la page Wyze.
+
+L'analyse statique ne permet pas d'affirmer que les credentials sont exclusivement des cookies, ni d'établir à elle seule le détail complet du mécanisme d'authentification. Elle démontre en revanche qu'Optimyze ne traite pas les URL comme des ressources publiques indépendantes de toute session.
+
+Lorsque le script ne dispose pas d'une session exploitable, il peut échouer avec le message :
+
+`Could not load this event - hover it until it plays, then click again`
+
+Lorsque le manifeste a échoué, le code peut également signaler que le lien de l'événement a expiré.
+
+##### 4.3.5.7 Conséquences pour une récupération autonome sur SERVOR
+
+L'analyse permet de distinguer trois catégories d'informations :
+
+| Information | Origine | Dépendance constatée |
+|---|---|---|
+| URL du manifeste | Requête interceptée ou `player.currentSrc()` | Lecteur Wyze / session Web View |
+| Modèles des fragments d'initialisation et média | Requêtes interceptées pendant la lecture | Trafic de lecture du navigateur |
+| Description des pistes et des segments | Analyse du MPD par `P()` | URL du manifeste et accès authentifié |
+
+Optimyze n'est donc pas un simple client API autonome auquel il suffirait de fournir un identifiant d'événement.
+
+Son fonctionnement documenté repose sur une lecture Wyze préalablement engagée dans le navigateur, l'observation des URL de ressources et l'utilisation du contexte de requête de la page.
+
+Une adaptation sur SERVOR devrait reproduire ou remplacer explicitement ces fonctions :
+
+- obtenir une URL de manifeste exploitable ;
+- obtenir les modèles de fragments nécessaires ;
+- disposer d'un mécanisme d'authentification compatible ;
+- récupérer les fragments ;
+- reconstruire et vérifier le MP4.
+
+Le moteur MP4 extrait et testé en section 4.3.4 ne résout que la dernière partie de cette chaîne. Sa validation sur médias synthétiques ne prouve pas que les ressources Wyze peuvent être obtenues.
+
+**Conclusion technique :** Optimyze constitue une preuve de faisabilité du téléchargement et de l'assemblage de fragments DASH dans le contexte de Wyze Web View. Il ne constitue pas une preuve de récupération autonome depuis SERVOR, sans navigateur.
+
+
+
 ---
 
 ## 5. Authentification Wyze
@@ -1705,15 +1900,19 @@ La reprise de la phase 6 interviendra après cette étude d'intégration, si ell
 
 ## 17. État général du projet
 
+
 | Élément | État |
 |---|---|
-| Authentification Wyze | Validée pour les essais réalisés |
+| Authentification Wyze | Validée lors des essais précédents ; jeton d'accès expiré le 24 novembre ; aucun renouvellement autorisé à ce stade |
 | Identification de la caméra pilote | Validée |
 | Récupération des événements | Validée |
-| Identification des ressources d'événements | Validée |
-| Récupération Kinesis Replay | Échec HTTP 500 lors des trois essais |
+| Identification des ressources d'événements | Validée ; ressource KVS v3 identifiée pour l'événement cible |
+| Récupération de l'ancien Replay v1 | Échec HTTP 500 lors des trois essais |
+| Compatibilité de `/app/v4/replay_url` avec GW_BE1 / KVS v3 | Non démontrée |
+| Obtention autonome d'une URL de manifeste KVS v3 | Non démontrée ; verrou technique prioritaire |
 | Téléchargement d'un clip Wyze | Non réalisé |
-| Analyse statique d'Optimyze | Réalisée, avec limites documentées |
+| Analyse statique d'Optimyze | Réalisée ; chaîne de lecture DASH détaillée |
+| Récupération des ressources DASH sans navigateur | Non démontrée |
 | Moteur MP4 indépendant, phases 1 à 5 | 25 tests réussis ; intégration DASH à étudier |
 | Compatibilité avec les fragments DASH de SERVOR | À vérifier |
 | Compatibilité avec des fragments Wyze réels | Non démontrée |
@@ -2021,3 +2220,152 @@ Ordre de travail recommandé :
 - Ne pas considérer le prototype TokenStore comme validé pour la production.
 
 **Conclusion :** l'adaptation de `wyze-node` à un stockage injecté est commencée et passe les contrôles statiques. Le remplacement du stockage historique est effectué dans la copie de travail, mais la validation fonctionnelle et la validation de sécurité restent à réaliser. La bibliothèque adaptée demeure un prototype de laboratoire, sans connexion Wyze ni déploiement sur SERVOR.
+
+
+
+---
+
+## 19. Point de situation — événement GW_BE1 et verrou de récupération vidéo — 25 novembre 2026
+
+### 19.1 Événement réel identifié
+
+L'analyse locale de la réponse `get_event_list` a permis d'identifier précisément l'événement utilisé comme cible de référence pour la suite des essais.
+
+Fichier de capture :
+
+`/tmp/wyze-audit.hiRZRx/captures/event-list-20261123T150802690Z.json`
+
+Caméra :
+
+- Nom fonctionnel : Sonnette Grille.
+- Modèle : `GW_BE1`.
+
+Événement cible :
+
+- `event_ts` : `1795421717004` millisecondes Unix.
+- Date UTC : `2026-11-23T08:15:17.004Z`.
+- `event_params.beginTime` : `1795421717004`.
+- `event_params.endTime` : `1795421737004`.
+- Durée calculée : 20 secondes.
+
+**Attention :** `event_ts`, `beginTime` et `endTime` sont des timestamps Unix numériques exprimés en millisecondes. Ils ne sont pas des chaînes de date ISO 8601.
+
+### 19.2 Ressources associées à l'événement
+
+Le champ `event_resources` contient deux ressources distinctes :
+
+| Type de ressource | Version | `required` | `status` |
+|---|---:|---:|---|
+| `s3` | 0 | `true` | 2 |
+| `kvs` | 3 | `true` | `null` |
+
+Autres observations :
+
+- `file_params` est absent ou nul pour l'événement dans la capture examinée.
+- Une ressource KVS version 3 est donc explicitement associée à l'événement.
+- Un examen complémentaire de la ressource KVS a indiqué `is_playable: true`.
+- La ressource KVS v3 ne doit pas être assimilée à l'ancienne ressource Replay v1 ni à une ressource KVS version 0.
+
+La présence de la ressource KVS v3 constitue un élément important : l'événement possède bien une ressource vidéo KVS déclarée par l'API d'événements.
+
+Elle ne fournit toutefois pas, à elle seule, une URL DASH directement exploitable ni les modèles de fragments nécessaires à la récupération.
+
+Aucune interprétation supplémentaire de `status: null` ne doit être faite sans documentation du protocole.
+
+### 19.3 Distinction entre les API étudiées
+
+Les analyses précédentes ont identifié plusieurs services et routes qui ne doivent pas être confondus :
+
+1. **API principale Wyze** — `https://api.wyzecam.com`  
+   L'authentification et la récupération de la liste des événements ont fonctionné lors des essais précédents.
+
+2. **Ancien service Replay v1** — `https://beta-ams-api.wyzecam.com`  
+   Les trois tentatives précédentes ont renvoyé HTTP 500. Aucune nouvelle tentative n'est autorisée sans accord explicite.
+
+3. **Service KVS** — `https://kvs-service.wyzecam.com`  
+   La route `/app/v4/replay_url` a été identifiée dans des sources communautaires, notamment `dishcam`. Son utilisation observée dans ces sources concerne une ressource KVS avec `resource_version: 0` et un autre modèle de caméra.
+
+La capture de la Sonnette Grille indique une ressource KVS version 3.
+
+Il n'est donc pas démontré que la route `/app/v4/replay_url`, avec les paramètres observés dans `dishcam`, soit compatible avec la GW_BE1 et sa ressource KVS v3.
+
+La présence de la route dans un projet communautaire ne constitue pas une preuve de compatibilité avec notre événement.
+
+### 19.4 Ce que l'analyse d'Optimyze permet désormais d'affirmer
+
+L'analyse statique complémentaire de `content.js` (section 4.3.5) a précisé le fonctionnement de l'extension :
+
+- l'URL du manifeste est capturée dans le trafic de lecture ou récupérée depuis `player.currentSrc()` ;
+- les URL des fragments média et d'initialisation sont capturées dans les requêtes effectuées par le lecteur ;
+- les modèles de fragments sont conservés séparément du résultat du parseur MPD ;
+- le manifeste décrit les pistes et les séquences ;
+- les URL de fragments sont construites à partir de modèles déjà observés ;
+- les téléchargements utilisent le contexte de credentials du navigateur.
+
+**Conséquence :** Optimyze ne démontre pas qu'un identifiant d'événement et un jeton API suffisent à récupérer un clip depuis SERVOR.
+
+Le navigateur apporte des informations de lecture qui ne figurent pas nécessairement dans la réponse `get_event_list`.
+
+Le moteur MP4 validé sur médias synthétiques ne résout pas cette dépendance : il sait traiter des fragments disponibles, mais ne sait pas obtenir les ressources Wyze.
+
+### 19.5 État des jetons et limites des essais
+
+Les jetons obtenus lors de la session d'authentification du 22 novembre sont conservés localement dans le dossier protégé :
+
+`/tmp/wyze-audit.hiRZRx/secrets/session-tokens.json`
+
+Le jeton d'accès utilisé lors de ces essais a expiré le 24 novembre 2026 à 07:22 UTC.
+
+Le fichier de session ne doit jamais être affiché, copié dans le dépôt ou inclus dans une sortie de diagnostic.
+
+**Aucun renouvellement de jeton n'est autorisé à ce stade.**
+
+Aucun nouvel appel réseau Wyze n'a été effectué pendant les analyses statiques du 25 novembre.
+
+Aucun clip réel n'a été téléchargé.
+
+### 19.6 Verrou technique actuel
+
+Le verrou n'est plus l'identification de l'événement ni la compréhension du fonctionnement général d'Optimyze.
+
+Les éléments suivants sont établis :
+
+- l'événement GW_BE1 du 23 novembre est identifié ;
+- sa durée est de 20 secondes ;
+- une ressource KVS v3 est associée à l'événement ;
+- Optimyze sait exploiter un manifeste DASH et des fragments obtenus pendant la lecture Web ;
+- les modèles de fragments utilisés par Optimyze sont capturés dans le trafic du lecteur ;
+- le moteur MP4 a été validé sur des médias synthétiques.
+
+En revanche, les points suivants restent non démontrés :
+
+- obtenir une URL de manifeste KVS v3 pour cet événement sans lecteur Web ;
+- établir les paramètres exacts nécessaires à une éventuelle route autonome ;
+- démontrer la compatibilité de `/app/v4/replay_url` avec la GW_BE1 et `resource_version: 3` ;
+- obtenir les fragments d'initialisation et média depuis SERVOR ;
+- reconstruire un véritable clip Wyze.
+
+**Le verrou prioritaire est donc l'obtention d'une URL de manifeste KVS v3 exploitable pour l'événement réel, sans dépendre du lecteur Wyze Web View.**
+
+Il ne faut pas reprendre les essais périphériques sur le moteur MP4 ou réexaminer une nouvelle fois les fonctions déjà comprises d'Optimyze tant que ce verrou n'a pas avancé.
+
+### 19.7 Point de reprise et règles applicables
+
+La prochaine étape de recherche devra être consacrée exclusivement à la possibilité d'obtenir la ressource de lecture KVS v3 de l'événement cible sans navigateur.
+
+Règles impératives :
+
+- aucune requête réseau Wyze sans autorisation explicite ;
+- aucun renouvellement de jeton sans autorisation explicite ;
+- aucun nouvel essai sur l'ancien Replay v1 sans autorisation explicite ;
+- aucun appel à `auth-check.js` ;
+- aucun téléchargement de clip sans confirmation explicite au moment du téléchargement ;
+- aucune installation de l'extension Optimyze ;
+- aucune modification des caméras ;
+- aucune modification de production sur SERVOR.
+
+La récupération d'une URL ou d'une réponse de lecture devra être examinée progressivement, en masquant systématiquement les jetons, URL signées, identifiants et paramètres sensibles.
+
+Avant tout téléchargement effectif, les informations obtenues devront être présentées et une confirmation explicite demandée.
+
+**Conclusion au 25 novembre 2026 :** l'événement réel et sa ressource KVS v3 sont identifiés. Le fonctionnement interne d'Optimyze est désormais suffisamment compris pour écarter l'hypothèse d'un téléchargeur autonome fondé uniquement sur l'identifiant d'événement. La récupération d'un manifeste KVS v3 sans navigateur reste le verrou technique principal. Aucun clip Wyze réel n'a encore été récupéré et aucune modification de production n'a été effectuée.
