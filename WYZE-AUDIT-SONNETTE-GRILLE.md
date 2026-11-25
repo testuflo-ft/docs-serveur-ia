@@ -1301,6 +1301,56 @@ Interprétation :
 - Aucun nouvel appel à cet endpoint ne doit être effectué sans autorisation explicite.
 - Aucun clip n'a été téléchargé.
 
+## 8. Tentatives d'obtention d'une URL de replay
+
+### 8.1 Analyse statique de l'endpoint KVS Replay v4 — 25 novembre 2026
+### Remontée du paramètre `resource_version` jusqu'à la ressource KVS
+
+L'analyse du DEX de l'APK Wyze 3.26.0.1046 (versionCode 62746) permet désormais de remonter le paramètre `resource_version` jusqu'à l'objet ressource sélectionné par le ViewModel.
+
+**1. Appel depuis `EventGroupViewModel$fetchVideoUrl$2`**
+
+Le ViewModel parcourt une liste de ressources et sélectionne celle dont `Lepu.f()` renvoie la chaîne `"kvs"`.
+
+Il récupère ensuite :
+- `deviceId` et `productModel` depuis l'objet appareil ;
+- `startTime` et `endTime` depuis les champs temporels de la ressource ;
+- une valeur long depuis `Lepu.g()`.
+
+Cette dernière valeur est convertie en entier (`long-to-int`) puis transmise à l'interface `kwc.f(...)`, avec `isLive=false`.
+
+La signature appelée est :
+
+`(String, String, long, long, boolean, int) -> Lu6e;`
+
+Elle correspond au wrapper `getKvsReplayUrl`.
+
+**2. Origine de la valeur transmise**
+
+L'implémentation de `Lepu.g(): long` lit directement le champ `Lepu.b:J` :
+
+`iget-wide ..., Lepu;.b:J`
+
+La méthode de sérialisation `Lepu.j()` confirme que ce champ correspond à l'élément de sérialisation d'index 1 et qu'il est encodé comme un long (`encodeLongElement`).
+
+La chaîne de transmission est donc établie :
+
+`Lepu.b (long) → Lepu.g() → long-to-int → getKvsReplayUrl(..., resourceVersion) → query parameter resource_version`
+
+**3. Limite de l'identification**
+
+Le nom JSON associé à l'élément de sérialisation d'index 1 n'est pas encore identifié. Il serait donc prématuré d'affirmer que le champ JSON source porte lui-même le nom `resource_version`.
+
+En revanche, le lien entre la valeur de `Lepu.b`, sa transmission au wrapper et son utilisation comme paramètre HTTP `resource_version` est démontré par le désassemblage.
+
+**4. Conséquence pour la compatibilité KVS v3**
+
+Cette analyse confirme que le chemin de lecture de l'application utilise une ressource identifiée comme `"kvs"` et transmet sa valeur de version à l'endpoint `/app/v4/replay_url`, avec `is_live=false`.
+
+Elle ne démontre pas encore que la valeur de version de la ressource KVS v3 observée dans la capture `get_event_list` est acceptée par cet endpoint, ni que la réponse obtenue permet effectivement de télécharger et reconstruire le clip.
+
+**État :** remontée du callsite et de la valeur de version établie ; nom JSON source et compatibilité effective KVS v3 non établis.
+
 ---
 
 ## 9. Architecture cible : Wyze Archive
