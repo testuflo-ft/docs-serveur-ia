@@ -2571,3 +2571,46 @@ Les trois essais antérieurs de Replay v1 ont renvoyé HTTP 500. Aucune nouvelle
 La prochaine étape sera l'étude documentaire du contrat de `/app/v4/replay_url`, avec pour objectif de déterminer si une récupération autonome de la ressource KVS v3 de la GW_BE1 est techniquement envisageable.
 
 Cette recherche ne commencera qu'à la reprise explicite du travail et restera soumise aux règles d'autorisation de la section 19.7.
+
+**Vérification locale complémentaire — 25 novembre 2026**
+
+Le fichier de capture `event-list-20261123T150802690Z.json` a été retrouvé sur SERVOR, dans le répertoire temporaire `/tmp/wyze-audit.hiRZRx/captures/`, puis relu avec un traitement local en lecture seule.
+
+La relecture confirme :
+- les clés racines `code`, `ts`, `msg`, `data` et `traceId` ;
+- quatre événements dans `data.event_list` ;
+- les quatre événements associés au modèle `GW_BE1` ;
+- la présence, pour chacun, de ressources S3 v0 et KVS v3 distinctes ;
+- pour l'événement étudié en §19.1, une ressource KVS v3 marquée `is_playable: true`, avec une fenêtre de 20 secondes.
+
+Cette vérification confirme que la capture locale contient bien les éléments décrits dans les sections précédentes. Elle ne démontre pas que la ressource KVS est encore accessible auprès de Wyze, ni que son clip a été récupéré.
+
+**Précaution :** le fichier se trouve dans `/tmp`, qui est un espace temporaire. Il ne doit pas être considéré comme une archive pérenne.
+
+## 19.9 — Synthèse des investigations complémentaires avec Gemini
+
+### 19.9.1 — Portée et niveau de preuve
+
+Trois investigations complémentaires ont été menées avec Gemini afin de confronter les éléments du dépôt `dishcam`, les projets communautaires Wyze et les informations publiées sur la récupération des événements vidéo.
+
+Cette section conserve les pistes et conclusions utiles de ces investigations. Elle ne constitue pas une validation indépendante des dépôts ou des services Wyze : les éléments rapportés par Gemini doivent être distingués des comportements directement vérifiés dans le code ou observés dans les captures locales.
+
+Les éléments concernant `dishcam` et l'endpoint Replay v4 sont déjà détaillés en §19.3.2. Ils ne sont donc pas reproduits ici.
+
+### 19.9.2 — Première investigation : récupération Replay v4 et vidéo DASH
+
+Les éléments examinés conduisent aux conclusions suivantes :
+
+- Le dépôt `eliwjones/dishcam` fournit un exemple d'appel à `/app/v4/replay_url` et de récupération du champ `data` de la réponse.
+- L'historique de ce dépôt montre une évolution depuis une méthode GraphQL de récupération de lecture et de sauvegarde MP4 vers l'utilisation de Replay v4. Cette évolution ne démontre pas, à elle seule, que l'endpoint Replay v4 renvoie directement un fichier vidéo complet.
+- Un article de Casey Ellis décrit un autre parcours : récupération d'événements, appel Replay, obtention d'un manifeste DASH signé et utilisation de FFmpeg. Les informations rapportées concernent son environnement et ne prouvent pas que le même parcours fonctionne avec la sonnette GW_BE1.
+- La durée de validité des URL signées, parfois rapportée comme étant de l'ordre de 5 à 15 minutes, reste une indication issue de cette documentation, et non une mesure effectuée sur notre appareil.
+- L'exigence Cam Plus mentionnée dans cet exemple ne doit pas être généralisée à tous les modèles, comptes ou endpoints Wyze.
+
+**Conclusion :** il existe des pistes documentaires crédibles pour un parcours Replay v4/DASH, mais aucune démonstration disponible ne confirme encore la récupération d'un clip de la GW_BE1 avec la ressource KVS v3 observée dans nos événements.
+
+### 19.9.3 — Deuxième investigation : API développeur, renouvellement et modèles
+
+L'examen des projets communautaires a fait ressortir plusieurs éléments distincts :
+
+- `docker-wyze-bridge` documente des mécanismes liés à l'API Wyze, notamment l'utilisation d'une API Key
