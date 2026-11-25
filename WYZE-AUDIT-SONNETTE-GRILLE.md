@@ -2272,6 +2272,43 @@ Elle ne fournit toutefois pas, à elle seule, une URL DASH directement exploitab
 
 Aucune interprétation supplémentaire de `status: null` ne doit être faite sans documentation du protocole.
 
+
+#### 19.2.1 Comparaison de quatre événements de la capture
+
+Une inspection complémentaire de la capture locale a porté sur les quatre événements présents dans `data.event_list`.
+
+Les quatre événements présentent exactement la même structure :
+
+| Champ | Ressource S3 v0 | Ressource KVS v3 |
+|---|---|---|
+| `required` | `true` | `true` |
+| `resource_type` | `s3` | `kvs` |
+| `resource_version` | `0` | `3` |
+| `file_id` | Présent | Absent |
+| `url` | Présent | Absent |
+| `file_params` | Objet vide | Absent |
+| `status` | `2` | Absent |
+| `is_playable` | Absent | `true` |
+| `begin_time` / `end_time` | Absents | Présents |
+
+Le champ `file_list` contient également un élément associé à la ressource S3, avec notamment `file_id` et `url`. Les valeurs de ces champs ne sont pas reproduites dans la documentation.
+
+Les quatre événements ont tous `ScanFrameNumber = 0`.
+
+Les durées observées pour les ressources KVS v3 sont respectivement de 20, 15, 15 et 12 secondes.
+
+**Interprétation :**
+
+- Les métadonnées S3 et KVS correspondent à deux ressources distinctes.
+- Le `file_id` et l'URL présents dans la ressource S3 ne doivent pas être attribués à la ressource KVS v3.
+- La ressource KVS v3 expose une fenêtre temporelle et un indicateur `is_playable`, mais aucun identifiant de fichier ni URL de lecture directe dans la réponse examinée.
+- `ScanFrameNumber = 0` est observé, mais son rôle dans la récupération vidéo n'est pas établi.
+
+Cette comparaison confirme que le profil observé sur l'événement cible n'est pas un cas isolé dans cette capture.
+
+Elle ne démontre pas que la ressource S3 contient le clip vidéo complet, ni qu'elle permet de récupérer la vidéo KVS.
+
+
 ### 19.3 Distinction entre les API étudiées
 
 Les analyses précédentes ont identifié plusieurs services et routes qui ne doivent pas être confondus :
@@ -2290,6 +2327,50 @@ La capture de la Sonnette Grille indique une ressource KVS version 3.
 Il n'est donc pas démontré que la route `/app/v4/replay_url`, avec les paramètres observés dans `dishcam`, soit compatible avec la GW_BE1 et sa ressource KVS v3.
 
 La présence de la route dans un projet communautaire ne constitue pas une preuve de compatibilité avec notre événement.
+
+
+#### 19.3.1 Contrat de l'ancien Replay v1 dans wyze-node 2.12.2
+
+L'analyse de `src/index.js` de `wyze-node` 2.12.2 (commit `d556f1b`) a permis d'identifier le fonctionnement exact de `getEventVideoURL(options)`.
+
+La méthode effectue un POST vers :
+
+`https://beta-ams-api.wyzecam.com/api/v1/kinesis/replay_url/get`
+
+Les données construites comprennent :
+
+- `device_mac` ;
+- `begin_time` ;
+- `end_time` ;
+- `expires` (valeur par défaut : 4000) ;
+- `max_manifest_fragment` (valeur par défaut : 1000) ;
+- `device_model` ;
+- `sc` et `sv`, propres à cette API Replay v1.
+
+Le corps commun construit par `getRequestBodyData()` ajoute notamment :
+
+- `access_token` ;
+- `phone_id` ;
+- `app_ver` ;
+- `sc` et `sv` ;
+- `ts`.
+
+Les paramètres spécifiques fournis à la méthode remplacent les valeurs générales correspondantes.
+
+**Comportement important :** si la réponse est reconnue comme une erreur de jeton, `getEventVideoURL()` appelle automatiquement `getRefreshToken()` puis relance la méthode. L'utilisation de cette méthode avec une session réelle peut donc déclencher un renouvellement de jeton.
+
+Cette route ne transmet pas les champs `resource_type`, `resource_version` ou `event_id`. Elle ne sélectionne donc pas explicitement la ressource KVS v3 identifiée dans notre capture.
+
+Les trois essais antérieurs de Replay v1 ont renvoyé HTTP 500.
+
+**Décision :**
+
+- ne pas réessayer cette route sans autorisation explicite ;
+- ne pas exécuter `getEventVideoURL()` avec les jetons réels ;
+- ne pas assimiler ce mécanisme Replay v1 à la récupération KVS v3.
+
+Cette analyse décrit le contrat du code communautaire étudié. Elle ne constitue pas une documentation officielle du protocole Wyze.
+
 
 ### 19.4 Ce que l'analyse d'Optimyze permet désormais d'affirmer
 
@@ -2369,3 +2450,24 @@ La récupération d'une URL ou d'une réponse de lecture devra être examinée p
 Avant tout téléchargement effectif, les informations obtenues devront être présentées et une confirmation explicite demandée.
 
 **Conclusion au 25 novembre 2026 :** l'événement réel et sa ressource KVS v3 sont identifiés. Le fonctionnement interne d'Optimyze est désormais suffisamment compris pour écarter l'hypothèse d'un téléchargeur autonome fondé uniquement sur l'identifiant d'événement. La récupération d'un manifeste KVS v3 sans navigateur reste le verrou technique principal. Aucun clip Wyze réel n'a encore été récupéré et aucune modification de production n'a été effectuée.
+
+
+### 19.8 Clôture de l'étape — inspection de la capture et contrat Replay v1
+
+L'inspection locale de la capture `event-list-20261123T150802690Z.json` est terminée.
+
+Les vérifications ont confirmé :
+
+- la structure racine de la réponse : `code`, `data`, `msg`, `traceId` et `ts` ;
+- la présence des quatre événements sous `data.event_list` ;
+- l'homogénéité de leurs deux ressources S3 v0 et KVS v3 ;
+- l'absence de `file_id`, d'URL et de `file_params` dans les objets KVS v3 ;
+- la présence de `is_playable: true` et des bornes temporelles pour chaque ressource KVS v3.
+
+L'analyse de `getEventVideoURL()` dans `wyze-node` 2.12.2 a également précisé le contrat de l'ancien Replay v1 et révélé son mécanisme de renouvellement automatique en cas d'erreur de jeton.
+
+**Résultat de l'étape :** la structure des ressources de l'événement et le fonctionnement de l'ancien Replay v1 sont suffisamment documentés. Aucune information supplémentaire exploitable pour obtenir directement le manifeste KVS v3 n'a été trouvée dans cette capture.
+
+Aucun nouvel appel réseau Wyze n'a été effectué pendant cette étape. Aucun jeton n'a été renouvelé et aucun clip n'a été téléchargé.
+
+**Étape terminée.** La prochaine étape, distincte, sera l'étude documentaire du contrat de `/app/v4/replay_url` et de sa compatibilité éventuelle avec la GW_BE1 et `resource_version: 3`. Elle ne commencera qu'après reprise explicite du travail.
