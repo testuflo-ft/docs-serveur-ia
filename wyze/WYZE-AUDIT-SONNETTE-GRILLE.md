@@ -3045,4 +3045,98 @@ Cet audit ne démontre pas :
 
 **Décision :** conserver le candidat et le rapport dans le laboratoire. Ne pas considérer les résultats comme une validation de production et ne procéder à aucun déploiement sur SERVOR sur la seule base de cet audit.
 
+## 21. Analyse statique de Replay v4 — propagation de `resource_version` et contre-analyse indépendante — 26 novembre 2026
+
+### 21.1 Objet et périmètre
+
+Cette étape vise à déterminer si la valeur `resource_version` associée à une ressource KVS v3 de l'événement GW_BE1 du 23 novembre 2026 est propagée par l'APK Wyze jusqu'à la construction de la requête `/app/v4/replay_url`.
+
+L'analyse porte sur les DEX de l'APK Wyze 3.26.0.1046 et sur les extraits statiques constitués localement. Elle a fait l'objet d'une contre-analyse indépendante par Claude.
+
+Aucun appel réseau Wyze n'a été effectué pendant cette étape. Aucun jeton n'a été renouvelé et aucun clip n'a été téléchargé.
+
+### 21.2 Intégrité du dossier transmis à la contre-analyse
+
+Le dossier `evidence-replay-v4` a été archivé et transmis à Claude.
+
+Contrôles effectués avant transmission :
+- 8 empreintes SHA-256 de pièces contrôlées : toutes conformes ;
+- archive ZIP : 9 fichiers, test d'intégrité `unzip -t` réussi ;
+- permissions restrictives sur les fichiers et l'archive.
+
+SHA-256 de l'archive `Wyze-Replay-v4-contre-analyse.zip` :
+
+`0cff634cd63605005b34e9ce85e7b8314cbf32dee5609fae4ab21fba461c3d7d`
+
+Le dossier comprenait notamment les cinq extraits DEX, le JSON d'événement filtré, le README et le prompt de contre-analyse.
+
+### 21.3 Résultats statiques concordants
+
+Les éléments suivants sont corroborés par les extraits examinés et la contre-analyse :
+
+1. Le descripteur `Lepu$a` associe la propriété JSON `resource_version` à l'index de sérialisation 1. Cet index découle de l'ordre d'enregistrement des éléments du descripteur. Le second argument de `Lo3n.l(String,Z)` est un booléen d'optionnalité et non l'index.
+2. Le désérialiseur lit un `long` à l'index 1, puis transmet cette valeur au constructeur de `Lepu`.
+3. Le constructeur stocke cette valeur dans le champ `Lepu.b:J`.
+4. Le getter `Lepu.g()J` renvoie ce champ. Le serializer réencode également ce champ à l'index 1.
+5. Dans `EventGroupViewModel$fetchVideoUrl$2`, le getter est appelé, puis la valeur subit une conversion `long-to-int` avant d'être transmise comme dernier argument de `Lkwc.f(...)`.
+6. La coroutine `EventGroupRepositoryRemoteImplementation$getKvsReplayUrl$1` stocke un entier dans `$resourceVersion:I`, puis le relit dans `invokeSuspend`.
+7. Cette coroutine associe la clé littérale `resource_version` à une valeur entière boxée, puis appelle `Lyvt.d(HttpRequestBuilder, String, Object)` avec cette clé et cette valeur.
+8. Le code construit ensuite un `HttpStatement` à partir du builder et du client HTTP.
+
+Pour la valeur observée `3`, la conversion du type `long` vers `int` ne provoque pas de perte numérique.
+
+Ces éléments établissent une chaîne mécanique de propagation de la valeur dans le code étudié, jusqu'à son passage à une méthode auxiliaire appelée lors de la construction du builder HTTP.
+
+### 21.4 Réserves apportées par la contre-analyse
+
+La contre-analyse conclut à une confirmation partielle. Les points suivants ne sont pas encore démontrés :
+
+- **Sélection KVS :** l'extrait fourni ne montre pas la sélection explicite de `resource_type == "kvs"` dans le ViewModel. La transmission d'une valeur de ressource est visible, mais son rattachement à la sélection KVS doit encore être établi.
+- **Raccord entre méthodes :** le corps de `Lkwc.f(...)` n'a pas été examiné. La concordance de signature ne suffit pas à démontrer que cette méthode déclenche précisément la coroutine `getKvsReplayUrl`.
+- **Sémantique de `Lyvt.d(...)` :** son corps n'est pas fourni. Il n'est donc pas encore possible d'affirmer que cet appel ajoute un paramètre de requête HTTP, même si la clé et la valeur lui sont transmises.
+- **Exécution HTTP :** la construction d'un `HttpStatement` ne prouve ni son exécution, ni l'envoi de la requête, ni la réception d'une réponse.
+- **Lien avec la capture :** le type `Lepu` est associé à un DTO `VideoSearchRepositoryResponseEventsItemEventResourcesItem`. Le lien complet entre ce DTO, la réponse de l'endpoint d'événements et la capture locale doit encore être établi par l'examen du DTO parent et de la chaîne de désérialisation.
+- **Lecture du clip :** aucune preuve ne démontre encore l'extraction d'une URL exploitable depuis la réponse Replay v4, ni sa transmission effective au lecteur vidéo.
+
+Le rôle exact de certaines méthodes obfusquées ne doit pas être déduit de leur seul nom ou de leur signature.
+
+### 21.5 Portée de la preuve concernant l'événement GW_BE1
+
+Le JSON `06-event-GW_BE1-filtered.json` transmis à Claude est une pièce volontairement filtrée. Son contenu permet de vérifier la présence d'une ressource KVS v3, `required: true`, `is_playable: true`, sur une fenêtre de 20 secondes. Il ne permet pas, à lui seul, de conclure à l'absence de `file_id`, d'URL ou de `file_params` dans la capture d'origine.
+
+Cette absence a toutefois été documentée séparément en §19.8 à partir de l'inspection locale de la capture brute : les quatre événements examinés présentaient une ressource KVS v3 sans ces champs, distincte de leur ressource S3 v0.
+
+Il faut conserver cette distinction entre la preuve contenue dans l'archive transmise et les observations consignées antérieurement à partir de la capture brute.
+
+### 21.6 Confidentialité et intégrité
+
+Selon la contre-analyse, les pièces transmises ne contenaient aucun jeton, identifiant sensible ou URL signée. Le timestamp exact de l'événement constitue une information temporelle précise, mais aucun secret d'authentification n'a été relevé.
+
+La contre-analyse n'a entraîné aucun nouvel appel réseau Wyze.
+
+### 21.7 Prochaines vérifications statiques
+
+Les investigations doivent être poursuivies dans l'ordre suivant :
+
+1. Retrouver dans `fetchVideoUrl$2` le parcours de sélection KVS et le relier au passage de `resource_version`.
+2. Examiner le corps complet de `Lkwc.f(...)` et identifier la méthode repository effectivement appelée.
+3. Examiner la suite de `invokeSuspend` après l'offset `216702`, en vérifiant les limites exactes de la méthode et de l'unité DEX avant toute extraction.
+4. Examiner le corps de `Lyvt.d(...)` et les méthodes associées à la construction de la requête (`Lang$a.b()` et `HttpRequestBuilder.m`, sous réserve de confirmation de leurs références exactes).
+5. Examiner le DTO parent `VideoSearchRepositoryResponseEventsItem` et la chaîne qui rattache ce modèle à la réponse d'événements.
+6. Examiner le DTO de réponse Replay et `fetchVideoUrl$2$url$1` pour déterminer comment une éventuelle URL de lecture est extraite et transmise au lecteur.
+
+Ces recherches restent strictement statiques et locales.
+
+### 21.8 Conclusion et statut au 26 novembre 2026
+
+**Résultat : propagation mécanique de `resource_version` partiellement établie jusqu'à la construction du builder HTTP.**
+
+La valeur observée dans le modèle de ressource est lue, stockée, récupérée par getter, convertie en entier et transmise à la coroutine Replay v4, qui l'associe à la clé `resource_version` avant de construire un `HttpStatement`.
+
+En revanche, la sélection explicite de la ressource KVS, le raccord entre le ViewModel et la coroutine, la sémantique de la méthode auxiliaire d'ajout au builder et l'exécution effective de la requête restent à établir.
+
+Cette analyse ne démontre ni l'acceptation de `resource_version: 3` par le serveur Wyze, ni l'obtention d'une URL de lecture, ni la récupération d'un clip réel.
+
+**Statut :** analyse statique Replay v4 partiellement confirmée par contre-analyse indépendante ; vérifications DEX complémentaires nécessaires ; aucun appel réseau Wyze et aucun téléchargement de clip effectués.
+
 La priorité du projet Wyze reste l'obtention d'une ressource de lecture KVS v3 exploitable pour l'événement réel, sans dépendance au lecteur Web Wyze. Les investigations complémentaires sur le moteur MP4 ne doivent pas détourner le travail de ce verrou technique tant qu'aucun fragment réel n'est disponible.
