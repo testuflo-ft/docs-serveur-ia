@@ -4,7 +4,7 @@
 
 Document de référence technique — Projet d'archivage local des événements vidéo Wyze.
 - **Statut global :** audit exploratoire en cours ; événement GW_BE1 du 23 novembre identifié avec ressource KVS v3 ; analyse statique d'Optimyze approfondie ; récupération et reconstruction d'un véritable clip Wyze non encore démontrées.
-- **Dernière mise à jour :** 25 novembre 2026 — identification de la ressource KVS v3 de l'événement cible ; reconstitution détaillée de la chaîne de lecture DASH d'Optimyze ; verrou de récupération autonome sans navigateur précisé ; audit indépendant du moteur MP4 Phase 5.
+- **Dernière mise à jour :** 27 novembre 2026 — ajout de la section 21.9.
 - **NAS cible :** Synology SERVOR — DSM 7.4.1-90080 — x86_64.
 - **Caméra pilote :** Wyze Video Doorbell Pro — « Sonnette Grille ».
 - **Modèle :** GW_BE1.
@@ -3140,3 +3140,53 @@ Cette analyse ne démontre ni l'acceptation de `resource_version: 3` par le serv
 **Statut :** analyse statique Replay v4 partiellement confirmée par contre-analyse indépendante ; vérifications DEX complémentaires nécessaires ; aucun appel réseau Wyze et aucun téléchargement de clip effectués.
 
 La priorité du projet Wyze reste l'obtention d'une ressource de lecture KVS v3 exploitable pour l'événement réel, sans dépendance au lecteur Web Wyze. Les investigations complémentaires sur le moteur MP4 ne doivent pas détourner le travail de ce verrou technique tant qu'aucun fragment réel n'est disponible.
+
+### 21.9 — Confirmation de l’ajout de `resource_version` au constructeur de paramètres URL
+
+**Date : 27 novembre 2026**
+
+Une analyse complémentaire de `base/classes29.dex` a permis de résoudre une réserve de la contre-analyse indépendante concernant la méthode `Lyvt.d(HttpRequestBuilder, String, Object)`.
+
+#### 1. Identification des interfaces et de l’implémentation
+
+- `Lmbr` est une interface publique abstraite qui déclare notamment `e(String, String)`.
+- `Lcsm` est une interface qui étend `Lmbr` et expose `build(): io.ktor.http.f`.
+- `Ldsm` est une classe publique finale qui implémente `Lcsm`.
+- `Ldsm` hérite de `io.ktor.util.StringValuesBuilderImpl`.
+
+#### 2. Vérification de la construction
+
+La méthode `Lyvt.d` récupère l’objet `Lcsm` depuis le constructeur d’URL, convertit la valeur en chaîne, puis appelle `Lmbr.e(String, String)` avec la clé et la valeur.
+
+Le corps de `StringValuesBuilderImpl.e(String, String)` a été retrouvé à l’offset DEX `28e094` dans `base/classes29.dex`.
+
+Il effectue les opérations suivantes :
+
+- vérification des deux arguments ;
+- normalisation de la valeur par appel à `StringValuesBuilderImpl.n(String)` ;
+- récupération de la liste associée à la clé par `StringValuesBuilderImpl.h(String)` ;
+- ajout de la valeur à cette liste par `List.add()`.
+
+La méthode `Ldsm.build()` récupère ensuite la map interne par `StringValuesBuilderImpl.j()` et construit l’objet `Lgsm`, de type `io.ktor.http.f`.
+
+#### 3. Conclusion
+
+La chaîne statique est désormais établie jusqu'à l'ajout effectif de `resource_version` dans la structure de paramètres URL de Ktor :
+
+`EventGroupViewModel` → `Lkwc.f` → `Liwc.f` → `EventGroupRepositoryRemoteImplementation.f` → coroutine `getKvsReplayUrl` → `Lyvt.d` → `Lcsm.e` → `StringValuesBuilderImpl.e` → ajout dans la liste associée à la clé.
+
+Cette analyse confirme que `resource_version` est bien ajouté comme paire clé/valeur au constructeur de paramètres URL. Elle lève la réserve concernant le rôle de `Lyvt.d` et l'absence d'identification de l'implémentation de `Lmbr.e`.
+
+#### 4. Limites restantes
+
+Cette preuve statique ne démontre pas encore :
+
+- le détail de la normalisation effectuée par `n()` ;
+- la sérialisation finale des paramètres dans l'URL ;
+- l'exécution effective du `HttpStatement` ;
+- l'envoi de la requête et la réponse du serveur Wyze ;
+- l'obtention d'une URL de manifeste ou la récupération du clip.
+
+Aucun appel réseau Wyze, aucun téléchargement de vidéo et aucune modification de production n'ont été effectués pendant cette analyse.
+
+**État :** ajout de `resource_version` à la structure de paramètres URL confirmé par analyse statique. Exécution réseau et récupération vidéo toujours non démontrées.
