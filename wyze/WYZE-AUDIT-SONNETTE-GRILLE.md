@@ -4,7 +4,7 @@
 
 Document de référence technique — Projet d'archivage local des événements vidéo Wyze.
 - **Statut global :** audit exploratoire en cours ; événement GW_BE1 du 23 novembre identifié avec ressource KVS v3 ; analyse statique d'Optimyze approfondie ; récupération et reconstruction d'un véritable clip Wyze non encore démontrées.
-- **Dernière mise à jour :** 27 novembre 2026 — ajout de la section 21.9.
+- **Dernière mise à jour :** 27 novembre 2026 — Analyse de `io.ktor.http.i`.
 - **NAS cible :** Synology SERVOR — DSM 7.4.1-90080 — x86_64.
 - **Caméra pilote :** Wyze Video Doorbell Pro — « Sonnette Grille ».
 - **Modèle :** GW_BE1.
@@ -3190,3 +3190,79 @@ Cette preuve statique ne démontre pas encore :
 Aucun appel réseau Wyze, aucun téléchargement de vidéo et aucune modification de production n'ont été effectués pendant cette analyse.
 
 **État :** ajout de `resource_version` à la structure de paramètres URL confirmé par analyse statique. Exécution réseau et récupération vidéo toujours non démontrées.
+
+### §21.10 — Replay v4 : chaîne de construction des paramètres URL (Lyvt.d → io.ktor.http.i) — 27 novembre 2026
+
+#### 1. Objet de l'extraction
+
+Poursuite de l'analyse statique de la chaîne Replay v4 de Wyze, après confirmation de `Lyvt.d()` à partir de sa transcription DEX brute.
+
+Fichier analysé sur le Mac mini :
+
+`dex-work/crossrefs/base-classes29.txt`
+
+La classe `Lio/ktor/http/i;` est localisée à partir de la ligne 1 344 109.
+
+#### 2. Relation entre `Lyvt.d()` et `io.ktor.http.i`
+
+La méthode `Lyvt.d(HttpRequestBuilder, String, Object)` appelle :
+
+- `HttpRequestBuilder.h()` pour obtenir un objet `io.ktor.http.i` ;
+- `io.ktor.http.i.k()` pour obtenir un objet `Lcsm` ;
+- `Object.toString()` sur la valeur reçue ;
+- `Lmbr.e(String, String)` pour ajouter la paire clé/valeur.
+
+L'extrait brut de `Lyvt.d()` a été vérifié : offsets DEX 147550 à 147592, références `method@50c0`, `method@535e`, `method@61f3`, `method@674a` et `field@f138`.
+
+La méthode `i.k()` retourne directement le champ `j`, de type `Lcsm`.
+
+Le constructeur de `io.ktor.http.i` initialise ce champ `j` avec un objet `Ltnt`, construit à partir du `Lcsm` initial. La méthode `i.s(Lcsm)` reproduit cette même logique : affectation du champ `i`, création de `Ltnt`, puis affectation au champ `j`.
+
+Pour `resource_version`, la valeur transmise à `Lyvt.d()` est un `Integer` non nul, issu de `Boxing.e`. La conversion par `Object.toString()` donne donc la chaîne décimale `"3"`.
+
+#### 3. Lien avec la construction de l'objet URL
+
+L'analyse précédente de `io.ktor.http.i.b()` a montré que cette méthode appelle `build()` sur le champ `j` et transmet le résultat au constructeur de `io.ktor.http.Url`.
+
+La méthode `io.ktor.http.i.toString()` appelle quant à elle `io.ktor.http.k.a(i, Appendable)` pour construire sa représentation textuelle.
+
+La dernière extraction de la classe montre également :
+
+- `i.n()` retourne le champ port `c` ;
+- `i.o()` retourne le champ schéma `a` ;
+- `i.p()` retourne le booléen `d` ;
+- `i.q()` encode le champ `e` avec `CodecsKt.i()` ;
+- `i.m()` parcourt une liste de chaînes et applique également `CodecsKt.i()` à chaque élément ;
+- `i.w(String)` affecte le champ hôte `b` ;
+- `i.x(int)` affecte le port `c` ;
+- `i.y(io.ktor.http.l)` affecte le schéma `a`.
+
+Ces éléments confirment que `io.ktor.http.i` représente un objet structuré utilisé dans la manipulation et la construction d'une URL.
+
+#### 4. Conclusion probatoire
+
+**Établi :**
+
+La paire `resource_version=3` est ajoutée au `Lcsm` accessible depuis l'objet `io.ktor.http.i`, via `Lyvt.d()`.
+
+Ce même objet `Lcsm`, enveloppé par `Ltnt` dans le champ `j`, est utilisé par `i.b()` lors de la construction d'un objet `Url`.
+
+**Non établi à ce stade :**
+
+La sérialisation finale de ce paramètre dans la chaîne URL, puis sa présence dans la requête HTTP effectivement envoyée.
+
+La méthode `io.ktor.http.k.a()` reste à examiner. Il faut également comprendre la construction produite par `Lcsm.build()`, le rôle de `Ltnt` et la représentation concrète des paramètres dans l'objet `Url`.
+
+Aucun appel réseau Wyze n'a été effectué. Aucune requête Replay v4 n'a été envoyée. Cette analyse repose exclusivement sur le désassemblage statique de l'APK.
+
+#### 5. Prochaine étape
+
+Reprendre par l'analyse de :
+
+1. `io.ktor.http.k.a()` : assemblage textuel de l'URL ;
+2. `Ltnt` : comportement du wrapper autour de `Lcsm` ;
+3. `Lcsm.build()` et `Lgsm` : construction de la collection de valeurs ;
+4. `StringValuesBuilderImpl.j()`, `h()` et `n()` ;
+5. les éventuels encodeurs et séparateurs de paramètres de requête.
+
+Ne conclure à la présence de `resource_version=3` dans l'URL finale qu'après vérification de cette chaîne de sérialisation.
