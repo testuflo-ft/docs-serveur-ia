@@ -3772,6 +3772,283 @@ Cette étape reconstitue les matériaux ensuite transmis aux fonctions de décod
 
 Les fonctions `WYZE_base64_decode` et `WYZE_xxtea_decrypt` sont implémentées dans la même bibliothèque `libwyze_olive-lib.so`.
 
+### 22.13 bis. Reconstruction algorithmique des buffers `key` et `encoded`
+
+Ce complément explicite le fonctionnement de `initKey()` au niveau des opérations et des indices. Il doit être lu avec le §22.13, qui décrit la zone mémoire parcourue et la structure des enregistrements.
+
+L'objectif de `initKey()` est de reconstruire, à partir des mots stockés dans chaque enregistrement, deux buffers distincts :
+
+- `key` : matériau transmis ensuite au déchiffrement XXTEA ;
+- `encoded` : données encodées qui seront décodées en Base64 avant le déchiffrement.
+
+Il ne faut pas confondre ces deux buffers avec la clé HMAC finale de `Signature2`. La clé HMAC est dérivée ultérieurement, dans `getSignatureByString()`, à partir du jeton d'accès et de la valeur applicative issue du déchiffrement.
+
+#### A. Lecture des six mots de contrôle
+
+Pour chaque enregistrement, six mots de 32 bits sont lus aux offsets suivants, relativement au début de l'enregistrement :
+
+| Variable | Offset | Rôle dans les calculs |
+|---|---:|---|
+| `w24` | `+0x00` | participe au calcul de `L` et de `S` |
+| `w25` | `+0x04` | participe au calcul de `S` |
+| `w20` | `+0x08` | participe au calcul de `S` |
+| `w19` | `+0x0c` | participe au calcul de `S` |
+| `w23` | `+0x10` | diviseur du calcul de `R` |
+| `w9` | `+0x14` | participe au calcul de `L` |
+
+Les trois paramètres calculés à partir de ces mots sont :
+
+```text
+L = w24 XOR w9
+
+S = w25 + w24 + w20 + w19
+
+R = signed_remainder(S, w23)
+```
+
+Précisions :
+
+- `XOR` désigne le OU exclusif binaire.
+- `S` est la somme des quatre mots indiqués.
+- `signed_remainder` désigne le reste de division signé observé dans le code natif. Il ne faut pas le remplacer automatiquement par un modulo mathématique positif : pour des opérandes négatifs, les deux opérations peuvent produire des résultats différents.
+- Le calcul suppose un diviseur `w23` non nul. Le traitement d'un éventuel diviseur nul n'est pas documenté ici.
+
+`L` et `R` servent ensuite aux calculs de longueur et à la transformation des mots de données.
+
+#### B. Calcul des paramètres intermédiaires
+
+Le code calcule ensuite :
+
+```text
+w10 = max(L + 37, 6)
+
+x11 = w10 - 5
+
+x12 = x11 AND NOT 1
+```
+
+La dernière opération efface le bit de poids faible de `x11`. Elle revient donc à arrondir cette valeur à l'entier pair inférieur ou égal.
+
+Ces trois expressions sont relevées dans le désassemblage. Elles doivent être conservées telles quelles dans une éventuelle réimplémentation.
+
+`x12` est un paramètre intermédiaire du traitement natif. Sa présence dans le calcul ne suffit pas, à elle seule, à justifier une interprétation fonctionnelle plus précise que celle établie par le contrôle de flux observé.
+
+#### C. Lecture et transformation des mots de données
+
+Après les six mots de contrôle, les données à transformer commencent à l'offset `+0x18` de l'enregistrement.
+
+La boucle utilise un indice `j` initialisé à 7 et augmenté de 2 à chaque itération :
+
+```text
+j = 7
+
+à chaque itération :
+    lire word1 et word2
+    transformer word1 et word2
+    répartir les résultats
+    j = j + 2
+```
+
+Les deux mots lus sont transformés séparément :
+
+```text
+A = word1 XOR (R + j - 6)
+
+B = word2 XOR (R + j - 5)
+```
+
+On peut aussi écrire :
+
+\[
+A_j=word1_j\oplus(R+j-6)
+\]
+
+\[
+B_j=word2_j\oplus(R+j-5)
+\]
+
+Les valeurs `R + j - 6` et `R + j - 5` sont les deux masques arithmétiques utilisés par les opérations XOR.
+
+Les deux mots ne sont donc pas déchiffrés avec un masque identique : le second utilise un décalage d'une unité par rapport au premier.
+
+#### D. Répartition entre `key` et `encoded`
+
+Après transformation, chaque valeur est dirigée vers l'un des deux buffers. Les conditions observées sont :
+
+```text
+if (j - 1) < 0x26:
+    key[j - 7] = A
+else:
+    encoded[j - 39] = A
+
+if j < 0x26:
+    key[j - 6] = B
+else:
+    encoded[j - 38] = B
+```
+
+Le seuil `0x26` vaut 38 en décimal.
+
+Les deux conditions sont légèrement différentes :
+
+- pour `A`, le test porte sur `j - 1` ;
+- pour `B`, le test porte directement sur `j`.
+
+Il est important de conserver cette différence. La remplacer par une condition commune décalerait la frontière entre les deux buffers.
+
+La distribution peut être explicitée par les premiers indices :
+
+| `j` | Destination de `A` | Destination de `B` |
+|---:|---|---|
+| 7 | `key[0]` | `key[1]` |
+| 9 | `key[2]` | `key[3]` |
+| 11 | `key[4]` | `key[5]` |
+| ... | ... | ... |
+| 35 | `key[28]` | `key[29]` |
+| 37 | `key[30]` | `key[31]` |
+| 39 | `encoded[0]` | `encoded[1]` |
+| 41 | `encoded[2]` | `encoded[3]` |
+| 43 | `encoded[4]` | `encoded[5]` |
+
+Cette table rend visible le point de séparation :
+
+- les indices de `key` sont alimentés jusqu'à la paire produite pour `j = 37` ;
+- à partir de `j = 39`, les deux valeurs sont dirigées vers `encoded`.
+
+Les indices de destination sont ceux employés par le code natif. Il ne faut pas les confondre avec les offsets des mots lus dans l'enregistrement.
+
+#### E. Pseudocode consolidé
+
+Le comportement établi peut être résumé par le pseudocode suivant :
+
+```text
+pour chaque enregistrement :
+
+    lire w24, w25, w20, w19, w23, w9
+
+    L = w24 XOR w9
+    S = w25 + w24 + w20 + w19
+    R = signed_remainder(S, w23)
+
+    w10 = max(L + 37, 6)
+    x11 = w10 - 5
+    x12 = x11 AND NOT 1
+
+    j = 7
+
+    tant que le contrôle de boucle natif autorise une itération :
+
+        lire word1 et word2
+
+        A = word1 XOR (R + j - 6)
+        B = word2 XOR (R + j - 5)
+
+        si (j - 1) < 0x26 :
+            key[j - 7] = A
+        sinon :
+            encoded[j - 39] = A
+
+        si j < 0x26 :
+            key[j - 6] = B
+        sinon :
+            encoded[j - 38] = B
+
+        j = j + 2
+```
+
+La condition d'arrêt exacte de la boucle doit rester celle du désassemblage, et non une borne supposée à partir de la seule longueur `L`. Les formules de calcul des paramètres intermédiaires ne doivent pas être utilisées pour inventer une borne de boucle qui n'aurait pas été vérifiée indépendamment.
+
+#### F. Raccord avec Base64 et XXTEA
+
+À la sortie de cette reconstruction, les deux buffers ont des fonctions différentes :
+
+```text
+key
+    -> matériau de clé transmis à WYZE_xxtea_decrypt()
+
+encoded
+    -> données soumises à WYZE_base64_decode()
+    -> données décodées transmises à WYZE_xxtea_decrypt()
+```
+
+La séquence fonctionnelle est donc :
+
+```text
+enregistrement natif
+    -> lecture des six mots de contrôle
+    -> calcul de L, S et R
+    -> calcul de w10, x11 et x12
+    -> lecture des mots de données
+    -> XOR donnant A et B
+    -> répartition entre key et encoded
+    -> décodage Base64 de encoded
+    -> déchiffrement XXTEA avec key
+    -> valeur applicative déchiffrée
+```
+
+Le déchiffrement XXTEA reçoit un pointeur sur les données décodées, leur longueur, un pointeur sur la clé et un pointeur destiné à recevoir la longueur de sortie.
+
+Le code natif charge 16 octets de clé pour ce traitement et recherche un terminateur NUL dans la zone prévue. En l'absence de terminateur dans les quinze premiers octets, il utilise les 16 premiers octets.
+
+Pour l'entrée applicative étudiée, les observations statiques et la vérification indépendante hors ligne sont les suivantes :
+
+| Propriété | Résultat observé |
+|---|---:|
+| Valeur de `L` | 40 |
+| Valeur de `R` | 2 |
+| Longueur du buffer Base64 reconstruit | 40 caractères |
+| Longueur après décodage Base64 | 28 octets |
+| Nombre de mots XXTEA | 7 |
+| Nombre de tours XXTEA | 13 |
+| Longueur de sortie vérifiée hors ligne | 23 octets |
+
+Pour XXTEA, le nombre de tours est calculé par division entière :
+
+\[
+n=\left\lceil\frac{28}{4}\right\rceil=7
+\]
+
+\[
+rounds=\left\lfloor\frac{52}{n}\right\rfloor+6
+=\left\lfloor\frac{52}{7}\right\rfloor+6=13
+\]
+
+La longueur utile est contrôlée dans l'intervalle observé :
+
+\[
+21\leq output\_length\leq24
+\]
+
+La sortie vérifiée de 23 octets respecte cet intervalle.
+
+Cette vérification indépendante confirme la cohérence de la reconstruction pour l'entrée étudiée. Elle ne constitue ni une exécution de la bibliothèque native, ni une validation serveur.
+
+#### G. Ce qui est établi et ce qui ne doit pas être extrapolé
+
+**Établi par l'analyse statique :**
+
+- la lecture des six mots de contrôle ;
+- les formules de `L`, `S` et `R` ;
+- les formules de `w10`, `x11` et `x12` ;
+- le démarrage de la boucle à `j = 7` et son incrément de 2 ;
+- les deux transformations XOR ;
+- les deux conditions distinctes de distribution ;
+- les formules des indices de destination dans `key` et `encoded` ;
+- le passage de `encoded` par Base64 puis de la sortie Base64 par XXTEA ;
+- le contrôle de longueur à la sortie du déchiffrement.
+
+**À ne pas prétendre sans nouvelle preuve :**
+
+- que `L` est directement la longueur du buffer `key` ou celle du buffer `encoded` ;
+- que `x12` représente à lui seul la borne exacte de la boucle ;
+- que la seule valeur de `L` permet de déduire tous les indices effectivement parcourus ;
+- que les valeurs des buffers sont publiables ;
+- que la validation hors ligne équivaut à une validation du serveur Wyze.
+
+Les valeurs secrètes, les buffers reconstruits, les octets de clé, la chaîne Base64 et le contenu déchiffré restent exclus du journal public.
+
+Ce complément décrit ainsi l'algorithme de reconstruction sans publier les données sensibles nécessaires à sa reproduction.
+
 ### 22.14 Entrée correspondant à l'identifiant applicatif étudié
 
 La recherche statique a permis d'identifier une entrée correspondant au hash MD5 de l'identifiant applicatif employé par le chemin `WyzeEventNet.u()`.
