@@ -4,7 +4,7 @@
 
 Document de référence technique — Projet d'archivage local des événements vidéo Wyze.
 - **Statut global :** audit exploratoire en cours ; événement GW_BE1 du 23 novembre identifié avec ressource KVS v3 ; analyse statique d'Optimyze approfondie ; récupération et reconstruction d'un véritable clip Wyze non encore démontrées.
-- **Dernière mise à jour :** 27 novembre 2026 — Analyse de `io.ktor.http.i`.
+- **Dernière mise à jour :** 28 novembre 2026 - analyse de Signature2.
 - **NAS cible :** Synology SERVOR — DSM 7.4.1-90080 — x86_64.
 - **Caméra pilote :** Wyze Video Doorbell Pro — « Sonnette Grille ».
 - **Modèle :** GW_BE1.
@@ -3267,26 +3267,51 @@ Reprendre par l'analyse de :
 
 Ne conclure à la présence de `resource_version=3` dans l'URL finale qu'après vérification de cette chaîne de sérialisation.
 
-## 22. Analyse statique de WpkSignature2Service — construction de la requête et reconstitution de Signature2 — 28 novembre 2026
+## 22. Analyse statique de WpkSignature2Service — construction de la requête Replay v4 et reconstitution de Signature2 — 28 novembre 2026
 
-### 22.1 Objet, périmètre et précautions
+### 22.1 Objet, périmètre et méthode
 
-Cette étape poursuit l'analyse statique de l'APK Wyze 3.26.0.1046 (versionCode 62746), afin de comprendre le mécanisme de signature associé à `WpkSignature2Service`.
+Cette étape poursuit l'analyse statique de l'APK Wyze 3.26.0.1046 (versionCode 62746). Elle porte sur le mécanisme `WpkSignature2Service`, la fonction native de génération de `Signature2` et son utilisation par `WyzeEventNet.u()` pour construire une requête vers Replay v4.
 
-Deux chemins de construction de requête Replay v4 doivent être distingués :
+Deux chemins présents dans l'APK doivent être distingués :
 
 1. Le chemin repository/coroutine Ktor, précédemment étudié, qui construit une requête vers `https://kvs-service.wyzecam.com/app/v4/replay_url` avec `Authorization`, `device_id`, `product_model`, `start_time`, `end_time`, `is_live` et `resource_version`.
-2. Le chemin `WyzeEventNet.u()`, qui construit une requête au moyen de `WpkSignature2Service` et fait intervenir `WpkSecurityUtil`, `WpkSecurity` et une fonction native de génération de signature.
+2. Le chemin `WyzeEventNet.u()`, qui utilise `WpkSignature2Service`, `WpkSecurityUtil`, `WpkSecurity` et une fonction native de génération de signature.
 
-L'existence de ces deux chemins dans l'APK ne démontre pas qu'ils sont interchangeables ni que toutes les requêtes Replay v4 empruntent le même mécanisme.
+L'existence de ces deux chemins ne démontre pas qu'ils sont interchangeables ni que toutes les requêtes Replay v4 empruntent le même mécanisme.
 
-Le présent relevé porte sur le second chemin et sur les fonctions associées. Il repose exclusivement sur l'analyse statique des DEX et de la bibliothèque native `libwyze_olive-lib.so`.
+Le présent relevé décrit le second chemin. Il repose sur l'analyse statique des DEX et de `libwyze_olive-lib.so`, ainsi que sur une vérification indépendante hors ligne de certains calculs.
 
 Aucun appel réseau Wyze n'a été effectué pendant cette analyse. Aucune routine native n'a été exécutée. Aucun jeton n'a été renouvelé, aucun clip n'a été téléchargé et aucune caméra ni aucun élément de production n'a été modifié.
 
 Les valeurs secrètes, clés natives, données déchiffrées et matériaux permettant de les reconstituer sont volontairement exclus de ce document public.
 
-### 22.2 Classe WpkSignature2Service : méthodes et responsabilités
+### 22.2 Vue d'ensemble de la chaîne étudiée
+
+Le chemin Replay v4 utilisant `WpkSignature2Service` peut être représenté ainsi :
+
+```text
+WyzeEventNet.u(...)
+    -> WpkSignature2Service.builder(appId)
+    -> WpkDomain.kvs_service_wyzecam("/app/v4/replay_url")
+    -> GetBuilder
+    -> ajout des paramètres de requête
+    -> GetBuilder.build()
+        -> getSortParams(paramsData)
+        -> construction des en-têtes
+        -> calcul de requestid
+        -> WpkSecurityUtil.getSignature(appId, sortedParams)
+            -> WpkSecurity.getSignature(appId, access_token, sortedParams)
+                -> getSignatureByString(...)
+        -> appendParams(url, paramsData)
+    -> GetBuilder.execute()
+    -> WyzeEventNet.z(Response)
+    -> WyzeEventVideoUrlData
+```
+
+Cette chaîne relie l'appelant Replay v4 au mécanisme natif de signature. Elle ne constitue pas une preuve que le serveur accepte la signature ni que la réponse contient une URL vidéo exploitable.
+
+### 22.3 Classe WpkSignature2Service : méthodes et responsabilités
 
 La classe `WpkSignature2Service` expose notamment les éléments suivants :
 
@@ -3296,147 +3321,152 @@ La classe `WpkSignature2Service` expose notamment les éléments suivants :
 - `cutStr(...)` ;
 - `filterField(...)`.
 
-Les noms de champs retrouvés dans cette famille de classes comprennent notamment `appid`, `appinfo`, `Authorization`, `nonce`, `phoneid`, `requestid`, `Signature2`, `access_token` et `Accept-Language`.
+Les noms de champs retrouvés dans cette famille de classes comprennent notamment `Signature2`, `nonce`, `requestid`, `appid`, `appinfo`, `phoneid`, `access_token`, `Authorization` et `Accept-Language`.
 
-Les offsets DEX principaux relevés dans `base-classes18.txt` sont :
+Les offsets DEX relevés dans `base-classes18.txt` sont :
 
 | Élément | Offset DEX |
 |---|---:|
 | `builder(String)` | `0x28a158` |
-| `cutStr(...)` | `0x28a268` |
 | `appendParams(...)` | `0x28a1b4` |
+| `cutStr(...)` | `0x28a268` |
 | `getSortParams(JSONObject)` | `0x28a2c8` |
 | `filterField(...)` | `0x28a3f4` |
+| `GetBuilder.build()` | `0x2899f4` |
 
-La méthode `builder(String)` instancie `WpkSignature2Service$Builder`, lui transmet la chaîne reçue, puis retourne l'objet Builder.
+La méthode `builder(String)` instancie `WpkSignature2Service$Builder`, lui transmet l'identifiant applicatif, puis retourne l'objet Builder.
 
-La préparation de la requête et le calcul de la signature ne doivent donc pas être attribués indistinctement à la classe principale : le traitement effectif se poursuit dans les classes internes Builder et GetBuilder.
+La préparation effective de la requête et le calcul de la signature sont réalisés dans les classes internes Builder et GetBuilder, et non dans la seule méthode `builder(String)`.
 
-### 22.3 getSortParams(JSONObject) : insertion du nonce et construction de la chaîne signée
+### 22.4 getSortParams(JSONObject) : insertion du nonce et construction du message signé
 
-La méthode `getSortParams(JSONObject)` est une méthode privée qui modifie le JSON reçu.
+La méthode `getSortParams(JSONObject)`, située à l'offset DEX `0x28a2c8`, modifie le JSON reçu.
 
-Son comportement établi est le suivant :
+Son comportement observé est le suivant :
 
 1. Appel de `System.currentTimeMillis()`.
 2. Conversion de la valeur temporelle en objet `Long`.
 3. Insertion ou remplacement de la propriété `nonce` dans le `JSONObject`.
-4. Récupération des clés avec `JSONObject.keys()` / `keySet()`.
-5. Conversion de l'itérable en liste au moyen de `CollectionsKt___CollectionsKt.e1(Iterable)`.
-6. Parcours de la liste triée.
+4. Récupération des clés du JSON.
+5. Conversion de l'itérable en liste au moyen du helper Kotlin `CollectionsKt___CollectionsKt.e1(Iterable)`.
+6. Parcours des clés dans l'ordre obtenu.
 7. Construction d'une chaîne sous la forme `clé=valeur&`.
 8. Suppression du dernier caractère `&`.
 
-La représentation produite est donc :
+La représentation produite est de la forme :
 
 ```text
 key1=value1&key2=value2&key3=value3
 ```
 
-De manière formelle :
+Formellement :
 
 ```text
 paramsData["nonce"] = currentTimeMillis()
 
-keys = sort(paramsData.keys())
+keys = sorted(paramsData.keys())
 
 sortedParams =
     join("&", key + "=" + paramsData[key].toString())
 ```
 
-Le helper Kotlin `e1` est utilisé pour obtenir la liste triée. L'analyse identifie ce mécanisme de tri des clés, mais ne doit pas lui attribuer un comparateur personnalisé qui n'aurait pas été démontré.
+Le helper Kotlin utilisé correspond au mécanisme de tri de la collection. L'analyse établit l'utilisation de ce helper pour obtenir la liste ordonnée des clés ; elle ne démontre pas l'existence d'un comparateur personnalisé.
 
-Les valeurs sont converties en chaîne au moment de la construction, notamment par le comportement de `StringBuilder.append(Object)`.
+Les valeurs sont converties en chaînes au moment de la concaténation, notamment par le comportement de `StringBuilder.append(Object)`.
 
-**Point important :** cette chaîne est construite sans encodage URL explicite dans `getSortParams()`. Elle constitue la représentation utilisée comme message par le calcul de signature. Elle ne doit pas être confondue avec la chaîne de paramètres URL construite ultérieurement par `appendParams()`.
+**Point essentiel :** `getSortParams()` construit la représentation utilisée comme message du HMAC. Elle ne réalise pas l'encodage des paramètres URL. Il ne faut donc pas confondre `sortedParams` avec la chaîne finale de requête HTTP.
 
-La méthode modifie le `JSONObject` initial : le nonce ajouté fait donc partie des paramètres ensuite parcourus par `appendParams()`.
+La méthode modifie le `JSONObject` initial. Le nonce ajouté fait donc partie des paramètres parcourus ultérieurement par `appendParams()`.
 
-### 22.4 appendParams(...) : construction des paramètres URL
+### 22.5 appendParams(...) : construction de l'URL
 
-La méthode `appendParams(url, json)` suit un chemin distinct de `getSortParams()`.
+La méthode `appendParams(url, json)`, située à l'offset DEX `0x28a1b4`, suit un chemin distinct de `getSortParams()`.
 
-Lorsque l'URL et le JSON sont non vides :
+Son fonctionnement observé est le suivant :
 
-1. Elle appelle `Uri.parse(url)`.
-2. Elle récupère un constructeur avec `buildUpon()`.
-3. Elle parcourt les clés du JSON.
-4. Pour chaque clé, elle récupère la valeur correspondante.
-5. Les valeurs nulles sont ignorées.
-6. Les autres valeurs sont converties en chaîne avec `toString()`.
-7. La paire est ajoutée avec `Uri.Builder.appendQueryParameter(key, value)`.
-8. Le résultat est construit avec `build().toString()`.
+1. Analyse de l'URL avec `Uri.parse(url)`.
+2. Création d'un constructeur avec `buildUpon()`.
+3. Parcours des clés du JSON.
+4. Récupération de la valeur associée à chaque clé.
+5. Ignorance des valeurs nulles.
+6. Conversion des autres valeurs en chaînes avec `toString()`.
+7. Ajout de chaque paire avec `Uri.Builder.appendQueryParameter(key, value)`.
+8. Construction de l'URL finale avec `build().toString()`.
 
-Si l'URL ou le JSON ne permet pas cette construction, la méthode retourne l'URL disponible ou une chaîne vide selon le cas observé.
+La méthode ne calcule pas la signature.
 
-Cette méthode ne calcule pas la signature.
+Il existe donc deux représentations distinctes des paramètres :
 
-La distinction entre les deux représentations est fondamentale :
+| Représentation | Fonction |
+|---|---|
+| `sortedParams` | Chaîne brute `clé=valeur&...` utilisée comme message du HMAC |
+| URL construite par `appendParams()` | Paramètres ajoutés à l'URL au moyen de `Uri.Builder.appendQueryParameter()` |
 
-- `getSortParams()` produit la chaîne brute `clé=valeur&...` utilisée comme message du HMAC ;
-- `appendParams()` construit l'URL finale avec `Uri.Builder.appendQueryParameter()`, qui applique les règles d'encodage des paramètres URL.
+`appendQueryParameter()` applique les règles d'encodage des paramètres URL. Il ne faut donc pas supposer que la représentation textuelle finale des paramètres dans l'URL est identique octet pour octet à la chaîne `sortedParams`.
 
-Il ne faut donc pas supposer que la chaîne signée et la représentation textuelle finale des paramètres dans l'URL sont identiques octet pour octet.
+La correspondance exacte entre la canonicalisation utilisée pour signer et celle attendue par le serveur n'a pas été vérifiée par une réponse serveur.
 
-La correspondance exacte entre la canonicalisation utilisée par le client et celle attendue par le serveur n'a pas été vérifiée par une réponse serveur. Elle reste hors du périmètre de cette preuve statique.
+### 22.6 GetBuilder : initialisation, en-têtes et construction de la requête
 
-### 22.5 GetBuilder : initialisation et construction de la requête
-
-Le constructeur de `GetBuilder` initialise notamment :
+Le constructeur de GetBuilder initialise notamment :
 
 - l'`appId` transmis par le Builder ;
-- un `JSONObject` vide destiné aux paramètres ;
+- un `JSONObject` destiné aux paramètres ;
 - un `logTag` de type `WyzeNetwork:` ;
 - `isShowLog` à `true` ;
 - `hasAccessToken` à `true` par défaut ;
-- une collection de headers ;
+- une collection d'en-têtes ;
 - un timeout de 30 000 ms ;
 - un `OkHttpClient` ;
 - un nonce propre au Builder, initialisé avec `String.valueOf(System.currentTimeMillis())`.
 
-Ce nonce initial est distinct du nonce ajouté ultérieurement par `getSortParams()`.
+Ce nonce initial est distinct du nonce ajouté ultérieurement au JSON par `getSortParams()`.
 
-La méthode `GetBuilder.build()` effectue ensuite les opérations suivantes, dans l'ordre observé :
+La méthode `GetBuilder.build()` effectue les opérations suivantes.
 
-**1. Préparation des paramètres signés**
+**1. Préparation de la chaîne signée**
 
-Appel de `getSortParams(paramsData)`.
+Appel de :
 
-Cette opération ajoute le nonce temporel au JSON et produit `sortedParams`.
+```text
+sortedParams = getSortParams(paramsData)
+```
 
-**2. Préparation des en-têtes**
+Cette opération ajoute le nonce temporel au JSON et construit la chaîne ordonnée utilisée comme message du HMAC.
 
-Fusion des en-têtes fournis par `OkHttpUtils.getHeaderInfo()`.
+**2. En-têtes hérités**
 
-**3. Ajout de l'identifiant applicatif**
+Les en-têtes fournis par `OkHttpUtils.getHeaderInfo()` sont fusionnés dans la collection d'en-têtes de la requête.
 
-Ajout de l'en-tête ou de la valeur de requête `appid` à partir de l'`appId` conservé par le Builder, selon la structure de headers construite.
+**3. Identifiant applicatif**
 
-**4. Ajout du jeton d'accès**
+Le Builder ajoute `appid`, dont la valeur provient de l'identifiant applicatif conservé par le Builder.
 
-Lorsque `hasAccessToken` est activé, ce qui est le comportement par défaut, le Builder récupère le jeton d'accès depuis `Center.access_token` et ajoute la valeur `access_token` à la collection d'en-têtes.
+**4. Jeton d'accès**
 
-Il faut distinguer cette valeur de l'en-tête `Authorization` : les deux éléments sont présents dans l'environnement de requête, mais leur rôle ne doit pas être confondu.
+Lorsque `hasAccessToken` est activé — comportement par défaut — le Builder récupère `Center.access_token` et ajoute l'en-tête `access_token`.
 
-**5. Construction de appinfo**
+Cet en-tête ne doit pas être confondu avec `Authorization`, ajouté séparément par l'appelant `WyzeEventNet.u()`.
 
-La valeur `appinfo` est construite à partir de :
+**5. Informations applicatives**
+
+Le champ `appinfo` est construit à partir de :
 
 ```text
 Center.app_name + "_android_" + ServiceCenter.getAppVersion()
 ```
 
-**6. Construction de phoneid**
+**6. Identifiant du téléphone**
 
 Le Builder vérifie la présence de `Center.phone_id`.
 
-Lorsque cette valeur est absente, un UUID est généré et le mécanisme `WpkSPUtil` est utilisé pour lire ou créer la valeur persistante `wpk_phone_id`.
+Lorsque cette valeur est absente, un UUID est généré et `WpkSPUtil` est utilisé pour lire ou créer la valeur persistante `wpk_phone_id`.
 
-La valeur obtenue est ensuite utilisée comme `phoneid`.
+La valeur obtenue est utilisée pour le champ `phoneid`.
 
-**7. Construction de requestid**
+**7. requestid**
 
-Le Builder calcule `requestid` au moyen de deux appels MD5 imbriqués appliqués à son nonce initial :
+Le Builder calcule `requestid` au moyen de deux appels MD5 imbriqués appliqués au nonce initial du Builder :
 
 ```text
 requestid = MD5(MD5(nonce_Builder))
@@ -3444,23 +3474,25 @@ requestid = MD5(MD5(nonce_Builder))
 
 Ce calcul est distinct de la génération de `Signature2`.
 
-Le nonce utilisé ici est celui initialisé dans le constructeur de `GetBuilder`, et non nécessairement celui ajouté ensuite à `paramsData` par `getSortParams()`.
+Le nonce concerné est celui initialisé dans le constructeur de GetBuilder, et non le nonce ajouté ensuite à `paramsData` par `getSortParams()`.
 
-La représentation intermédiaire exacte de chaque résultat doit être décrite selon l'implémentation de la fonction MD5 appelée par ce chemin ; il ne faut pas substituer arbitrairement les octets bruts à une chaîne hexadécimale.
+La structure des deux appels MD5 est observée dans le chemin de construction. En revanche, la représentation exacte transmise entre le premier et le second appel — chaîne hexadécimale ou digest binaire — n'est pas suffisamment établie dans les éléments conservés ici. Il ne faut donc pas développer cette formule en affirmant un format intermédiaire qui n'a pas été vérifié.
 
-**8. Calcul de Signature2**
+**8. Signature2**
 
-Appel de :
+Le Builder appelle :
 
 ```text
 WpkSecurityUtil.getSignature(appId, sortedParams)
 ```
 
-Cette méthode récupère le jeton d'accès dans `Center.access_token` et transmet les trois arguments à `WpkSecurity.getSignature(...)`.
+Le wrapper récupère `Center.access_token` et transmet à la couche native l'identifiant applicatif, le jeton d'accès et la chaîne `sortedParams`.
 
-**9. Ajout de Accept-Language**
+La valeur calculée est ajoutée à la collection d'en-têtes sous le nom `Signature2`.
 
-La valeur est construite avec :
+**9. Langue**
+
+Le champ `Accept-Language` est construit avec :
 
 ```text
 Locale.getDefault().toLanguageTag()
@@ -3468,19 +3500,19 @@ Locale.getDefault().toLanguageTag()
 
 **10. En-tête nonce facultatif**
 
-Lorsque `includeNonceHeader` est activé, le Builder ajoute un en-tête `nonce`.
+Lorsque `includeNonceHeader` est activé, un en-tête `nonce` est ajouté.
 
-La valeur est récupérée depuis `paramsData` si la propriété `nonce` y est présente ; sinon, le nonce initial du Builder est utilisé.
+La valeur est récupérée depuis `paramsData` si le JSON contient la propriété `nonce`. Sinon, le nonce initial du Builder est utilisé.
 
 **11. Construction de l'URL**
 
 Enfin, `appendParams(url, paramsData)` ajoute les paramètres JSON à l'URL et le Builder conserve l'URL construite.
 
-L'ordre de ces opérations est important : la chaîne signée est calculée à partir de `sortedParams`, avant l'ajout final des paramètres à l'URL.
+Les en-têtes et les paramètres URL sont deux ensembles distincts. En particulier, les champs ajoutés à la collection d'en-têtes par GetBuilder ne doivent pas être présentés comme des paramètres du JSON `paramsData`.
 
-### 22.6 Fonctions auxiliaires cutStr et filterField
+### 22.7 Fonctions auxiliaires cutStr et filterField
 
-Deux méthodes supplémentaires ont été examinées.
+Deux méthodes auxiliaires de la classe ont également été examinées.
 
 **cutStr(...)**
 
@@ -3492,25 +3524,78 @@ Son comportement observé est le suivant :
 - si la limite est supérieure ou égale à la longueur en octets de la chaîne UTF-8, elle retourne la chaîne complète ;
 - sinon, elle copie les `n` premiers octets avec `Arrays.copyOf(...)`, reconstruit une chaîne UTF-8, puis retire le dernier caractère.
 
-Il s'agit d'une troncature basée sur la longueur en octets, et non sur le nombre de caractères Unicode.
-
-Il faut donc éviter de présenter cette méthode comme une troncature Unicode générale garantissant la conservation de tous les caractères multioctets.
+La troncature est donc basée sur une longueur en octets et non sur le nombre de caractères Unicode. Elle ne garantit pas, dans tous les cas, la conservation correcte des caractères multioctets.
 
 **filterField(...)**
 
-Cette méthode intervient dans le filtrage de champs JSON pour la journalisation.
+Cette méthode intervient dans le filtrage des champs JSON destinés à la journalisation.
 
-Les champs ciblés sont remplacés, y compris dans le parcours récursif des structures JSON, par la chaîne littérale :
+Les champs ciblés sont remplacés, y compris dans le parcours récursif des structures JSON, par la chaîne :
 
 ```text
 [FILTERED]
 ```
 
-Cette méthode relève de la protection des données affichées dans les logs ; elle ne constitue pas une étape du calcul cryptographique de Signature2.
+Cette fonction relève du filtrage des données affichées dans les logs. Elle ne constitue pas une étape du calcul cryptographique de Signature2.
 
-### 22.7 Chaîne Java/Kotlin vers la fonction native
+### 22.8 WyzeEventNet.u() : appel réel du service Replay v4
 
-La chaîne d'appel identifiée est :
+La méthode `WyzeEventNet.u()` a été retrouvée dans `base-classes14.txt`, autour des lignes 489430 à 489515.
+
+Son adresse DEX est située dans la zone `0x1320f4–0x1321c0`.
+
+Sa signature est :
+
+```text
+u(String, String, long, long, boolean, int)
+    -> WyzeEventVideoUrlData
+```
+
+Les arguments correspondent à :
+
+- l'identifiant de l'appareil ;
+- le modèle du produit ;
+- le début de la fenêtre temporelle ;
+- la fin de la fenêtre temporelle ;
+- le booléen `isLive` ;
+- la version de ressource KVS.
+
+La méthode construit une requête GET vers :
+
+```text
+https://kvs-service.wyzecam.com/app/v4/replay_url
+```
+
+L'URL est obtenue par :
+
+```text
+WpkDomain.Companion.kvs_service_wyzecam("/app/v4/replay_url")
+```
+
+Le Builder est instancié avec un identifiant applicatif constant. Sa valeur exacte n'est pas reproduite dans ce document public.
+
+La méthode ajoute séparément l'en-tête `Authorization`, à partir du jeton récupéré par le service d'accès au compte.
+
+Elle ajoute ensuite les paramètres suivants au Builder :
+
+| Paramètre | Type transmis |
+|---|---|
+| `device_id` | chaîne |
+| `product_model` | chaîne |
+| `start_time` | long |
+| `end_time` | long |
+| `is_live` | booléen |
+| `resource_version` | entier |
+
+Le Builder est ensuite exécuté au moyen de `GetBuilder.execute()`.
+
+Cette méthode établit le raccord entre le mécanisme `WpkSignature2Service` et l'endpoint Replay v4.
+
+**Distinction des jetons :** l'appelant ajoute un en-tête `Authorization` au moyen du service d'accès. De son côté, `GetBuilder` peut ajouter un en-tête `access_token` à partir de `Center.access_token`, et `WpkSecurityUtil` utilise également cette dernière valeur pour appeler la fonction native. Les éléments étudiés identifient ces deux chemins d'obtention, mais ne suffisent pas à affirmer que les valeurs sont nécessairement identiques dans tous les états d'exécution.
+
+### 22.9 Chaîne Java/Kotlin vers la fonction native
+
+La chaîne d'appel de la signature est :
 
 ```text
 GetBuilder.build()
@@ -3529,7 +3614,7 @@ Les méthodes natives exposées comprennent notamment :
 - `getSignature(String, String, String)` ;
 - `getSignature(String, String, byte[])`.
 
-La fonction étudiée ici est `getSignatureByString`, située dans `libwyze_olive-lib.so` à l'offset `0x16104`.
+La fonction étudiée est `getSignatureByString`, située dans `libwyze_olive-lib.so` à l'offset `0x16104`.
 
 À l'entrée de la fonction JNI :
 
@@ -3539,13 +3624,13 @@ La fonction étudiée ici est `getSignatureByString`, située dans `libwyze_oliv
 - `x3` contient `access_token` ;
 - `x4` contient `sortedParams`.
 
-Le désassemblage montre que les trois arguments applicatifs sont conservés et utilisés dans des rôles distincts :
+Le désassemblage permet d'établir les rôles distincts de ces trois arguments applicatifs :
 
 - `appId` sert à identifier une entrée dans une table native ;
 - `access_token` participe à la dérivation de la clé HMAC ;
 - `sortedParams` constitue le message du HMAC.
 
-### 22.8 Premier MD5 : identification de l'entrée native
+### 22.10 Premier MD5 : recherche dans la table native
 
 La fonction native calcule d'abord :
 
@@ -3554,17 +3639,15 @@ digest_app = MD5(UTF8(appId))
 lookup_key = lowercase_hex(digest_app)
 ```
 
-Le résultat du MD5 est représenté sous forme de 32 caractères hexadécimaux minuscules.
+Le résultat est représenté sous forme de 32 caractères hexadécimaux minuscules.
 
 Cette chaîne est utilisée pour rechercher une entrée dans une table native.
 
-**Ce premier MD5 n'est pas la clé HMAC.**
+**Le premier MD5 n'est pas la clé HMAC.** Il sert uniquement à sélectionner la valeur applicative associée à l'identifiant de l'application.
 
-Il sert uniquement à sélectionner la valeur applicative associée à l'identifiant de l'application.
+La comparaison des clés de recherche a été reliée à `strcmp` à partir des symboles dynamiques et des appels PLT observés dans la bibliothèque.
 
-La fonction de comparaison utilisée par la table a été reliée à `strcmp` à partir des symboles dynamiques et des appels PLT observés dans la bibliothèque.
-
-### 22.9 Deuxième MD5 : dérivation de la clé HMAC
+### 22.11 Deuxième MD5 : dérivation de la clé HMAC
 
 Après la recherche dans la table, la fonction native récupère la valeur associée à la clé de recherche.
 
@@ -3574,7 +3657,7 @@ Elle construit ensuite une chaîne par concaténation :
 key_material = UTF8(access_token || S_app)
 ```
 
-Le désassemblage montre explicitement l'ajout de la valeur récupérée dans la table à la chaîne contenant le jeton d'accès.
+Le désassemblage montre explicitement que la valeur récupérée dans la table est ajoutée à la chaîne contenant le jeton d'accès.
 
 Le second MD5 est calculé sur cette concaténation :
 
@@ -3590,13 +3673,15 @@ La clé transmise au HMAC est constituée des caractères ASCII de cette représ
 hmac_key = UTF8(lowercase_hex(digest_key))
 ```
 
-Il faut donc distinguer :
+Il faut donc distinguer trois opérations :
 
-- le premier MD5, qui sert à retrouver l'entrée native ;
-- le second MD5, qui dérive effectivement la clé HMAC ;
-- la représentation hexadécimale du second MD5, utilisée comme chaîne ASCII et non comme les 16 octets bruts du digest.
+1. le premier MD5, qui sert à retrouver l'entrée native ;
+2. le second MD5, qui dérive la clé HMAC à partir de `access_token` et de la valeur de table ;
+3. la conversion du second digest en 32 caractères hexadécimaux minuscules, utilisés comme octets ASCII de la clé HMAC.
 
-### 22.10 Vérification du format des sorties MD5
+Le second digest n'est donc pas transmis au HMAC sous la forme de ses 16 octets binaires bruts.
+
+### 22.12 Format des sorties MD5
 
 Le désassemblage de `MD5.getHash()` à l'offset `0x18570` établit le format de sortie hexadécimal.
 
@@ -3617,23 +3702,32 @@ Un autre overload, `MD5.getHash(unsigned char*)`, situé à l'offset `0x18678`, 
 
 Ces deux sorties ne sont pas interchangeables.
 
-Pour le calcul de Signature2 étudié ici, la représentation hexadécimale du second MD5 est utilisée comme clé HMAC sous forme de 32 octets ASCII.
+Pour le calcul de Signature2 étudié ici, le résultat du second MD5 est utilisé sous forme hexadécimale, c'est-à-dire comme 32 octets ASCII minuscules constituant la clé HMAC.
 
-### 22.11 Table native : initialisation et reconstruction statique
+### 22.13 JNI_OnLoad et initialisation de la table native
 
-La fonction `JNI_OnLoad`, située à `0x15574`, vérifie le nom du package parmi plusieurs candidats.
+La fonction `JNI_OnLoad`, située à l'offset `0x15574`, vérifie le nom du package parmi plusieurs candidats.
 
 Lorsqu'un package correspond, elle appelle `initKey()` et retourne la version JNI 1.6 (`0x10006`).
 
 La fonction `initKey()` se trouve à l'offset `0x158c0`.
 
-L'analyse de cette fonction montre qu'elle parcourt une zone de données statique comprise entre `0x2b68` et `0xc670`, avec un pas de `0x190`.
+Elle parcourt une zone de données statique comprise entre `0x2b68` et `0xc670`, avec un pas de `0x190`, soit 127 enregistrements.
 
-Cela correspond à 127 enregistrements.
+Chaque enregistrement contient six mots de 32 bits utilisés pour reconstruire les paramètres de la clé et les données encodées.
 
-Chaque enregistrement contient des valeurs numériques utilisées pour reconstruire une clé et une zone de données encodées.
+Les six mots initiaux sont lus aux positions suivantes dans chaque enregistrement :
 
-Les opérations intermédiaires observées comprennent :
+| Mot | Position dans l'enregistrement |
+|---|---:|
+| `w24` | `+0x00` |
+| `w25` | `+0x04` |
+| `w20` | `+0x08` |
+| `w19` | `+0x0c` |
+| `w23` | `+0x10` |
+| `w9` | `+0x14` |
+
+Les calculs intermédiaires observés sont :
 
 ```text
 L = w24 XOR w9
@@ -3641,7 +3735,7 @@ S = w25 + w24 + w20 + w19
 R = signed_remainder(S, w23)
 ```
 
-La longueur de travail est ensuite déterminée à partir de `L` :
+La fonction calcule ensuite les paramètres de longueur :
 
 ```text
 w10 = max(L + 37, 6)
@@ -3651,24 +3745,57 @@ x12 = x11 & ~1
 
 La boucle de reconstruction commence à `j = 7` et progresse par pas de deux.
 
-Les deux mots lus dans chaque paire sont transformés par XOR avec des valeurs dérivées de `R` et de l'indice de boucle.
+À chaque itération, deux mots sont lus dans la zone de données de l'enregistrement, à partir de `+0x18`, avec un pas de huit octets.
 
-Les résultats sont répartis entre :
+Les deux mots sont transformés par XOR :
 
-- la zone de clé ;
-- la zone de données encodées.
+```text
+A = word1 XOR (R + j - 6)
+B = word2 XOR (R + j - 5)
+```
 
-Cette reconstruction permet ensuite d'appeler les fonctions de décodage et de déchiffrement.
+Le résultat est réparti entre la zone de clé et la zone de données encodées selon les conditions d'indice observées :
 
-Les fonctions `WYZE_base64_decode` et `WYZE_xxtea_decrypt` ont été identifiées dans la même bibliothèque native. Elles ne sont pas seulement des symboles externes supposés : leurs implémentations se trouvent dans `libwyze_olive-lib.so`.
+```text
+if (j - 1) < 0x26:
+    key[j - 7] = A
+else:
+    encoded[j - 39] = A
 
-**Confidentialité :** les valeurs des enregistrements, clés reconstituées, chaînes encodées et résultats en clair ne sont pas reproduits dans ce journal public.
+if j < 0x26:
+    key[j - 6] = B
+else:
+    encoded[j - 38] = B
+```
 
-### 22.12 Décodage Base64 et déchiffrement XXTEA
+Cette étape reconstitue les matériaux ensuite transmis aux fonctions de décodage Base64 et de déchiffrement XXTEA.
+
+Les fonctions `WYZE_base64_decode` et `WYZE_xxtea_decrypt` sont implémentées dans la même bibliothèque `libwyze_olive-lib.so`.
+
+### 22.14 Entrée correspondant à l'identifiant applicatif étudié
+
+La recherche statique a permis d'identifier une entrée correspondant au hash MD5 de l'identifiant applicatif employé par le chemin `WyzeEventNet.u()`.
+
+Les métadonnées non secrètes de cette entrée sont :
+
+| Propriété | Valeur |
+|---|---:|
+| Index dans la table | `2` |
+| Offset de l'enregistrement | `0x2e88` |
+| `L` | `40` |
+| `R` | `2` |
+| Longueur de la chaîne Base64 reconstruite | `40` caractères |
+| Longueur après décodage Base64 | `28` octets |
+
+Les valeurs de clé, la chaîne Base64, les données déchiffrées et le contenu secret de cette entrée sont volontairement exclus du document public.
+
+Cette identification permet de relier la recherche par `MD5(appId)` à une entrée effective de la table native sans publier les matériaux permettant de reproduire le secret applicatif.
+
+### 22.15 Décodage Base64 et déchiffrement XXTEA
 
 La chaîne reconstruite à partir de l'enregistrement correspondant est soumise à un décodage Base64, puis à un déchiffrement XXTEA.
 
-La fonction native de décodage Base64 se trouve à l'offset `0x18954`.
+La fonction de décodage Base64 se trouve à l'offset `0x18954`.
 
 La fonction `WYZE_xxtea_decrypt` se trouve à l'offset `0x18da8`.
 
@@ -3681,11 +3808,18 @@ Son interface reçoit :
 
 Le désassemblage montre le chargement de 16 octets de clé.
 
-La fonction prépare les données sous forme de mots de 32 bits et applique le déchiffrement XXTEA.
+La fonction examine les octets de la clé à la recherche d'un terminateur NUL dans la zone prévue. Si aucun terminateur n'est trouvé dans les quinze premiers octets, elle utilise les 16 premiers octets.
 
-Pour la taille de données étudiée, la longueur décodée est de 28 octets, soit sept mots de 32 bits.
+La fonction prépare ensuite les données sous forme de mots de 32 bits et applique le déchiffrement XXTEA.
 
-Le nombre de tours correspond à la formule XXTEA :
+Pour l'entrée étudiée :
+
+```text
+longueur après Base64 = 28 octets
+n = 28 / 4 = 7 mots de 32 bits
+```
+
+Le nombre de tours suit la formule XXTEA :
 
 ```text
 rounds = 52 / n + 6
@@ -3703,26 +3837,34 @@ La boucle inverse utilise l'index de clé dérivé de :
 (p & 3) XOR e
 ```
 
-La fonction vérifie ensuite la longueur finale annoncée par le dernier mot déchiffré. Elle accepte une longueur comprise dans l'intervalle correspondant aux données utiles du dernier mot, alloue le buffer de sortie, copie les octets, ajoute le terminateur NUL et renseigne la longueur de sortie.
+La fonction vérifie ensuite la longueur finale annoncée par le dernier mot déchiffré.
 
-Une vérification indépendante, réalisée hors ligne en Python à partir de la reconstruction statique des données, a confirmé la longueur de sortie attendue pour l'entrée correspondant à l'identifiant applicatif étudié.
+Pour sept mots, la longueur utile doit se trouver dans l'intervalle :
 
-Cette vérification ne nécessite pas l'exécution de la bibliothèque native.
+```text
+21 <= output_length <= 24
+```
 
-Le résultat en clair et les matériaux permettant de le reproduire sont volontairement exclus du journal public.
+La fonction alloue le buffer de sortie, copie les octets utiles, ajoute le terminateur NUL et renseigne la longueur de sortie.
 
-### 22.13 HMAC-MD5 : fonction et ordre des arguments
+Une vérification indépendante réalisée hors ligne en Python à partir de la reconstruction statique a confirmé une longueur de sortie de 23 octets pour l'entrée correspondant à l'identifiant applicatif étudié.
+
+Cette vérification n'a nécessité ni l'exécution de la bibliothèque native ni un appel réseau.
+
+Le contenu déchiffré et les matériaux permettant de le reproduire sont volontairement exclus du document public.
+
+### 22.16 HMAC-MD5 : fonction, clé et message
 
 La fonction native `hmac<MD5>` a été identifiée à l'offset `0x17690`.
 
-L'appel depuis `getSignatureByString` se situe dans la zone de code autour de `0x164b0`.
+L'appel depuis `getSignatureByString` se situe autour de l'offset `0x164b0`.
 
-Le suivi des registres établit les rôles des deux couples pointeur/longueur transmis :
+Le suivi des registres établit les rôles des deux couples pointeur/longueur transmis à la fonction :
 
 - `x0/x1` : pointeur et longueur du message, soit `sortedParams` ;
 - `x2/x3` : pointeur et longueur de la clé HMAC, soit la représentation hexadécimale du second MD5.
 
-Cette observation fixe le sens de l'opération :
+Le sens de l'opération est donc :
 
 ```text
 HMAC-MD5(
@@ -3733,7 +3875,7 @@ HMAC-MD5(
 
 L'implémentation suit le mécanisme HMAC standard avec une taille de bloc MD5 de 64 octets.
 
-Le désassemblage de la fonction montre notamment :
+Le désassemblage montre :
 
 1. le traitement de la longueur de la clé ;
 2. le hachage préalable de la clé si elle dépasse la taille du bloc ;
@@ -3743,13 +3885,34 @@ Le désassemblage de la fonction montre notamment :
 6. la construction du bloc XOR avec `opad` ;
 7. le calcul MD5 externe sur le résultat interne.
 
-La fonction retourne une chaîne produite par le mécanisme natif de signature, que la fonction JNI transmet à Java au moyen de `NewStringUTF`.
+La fonction retourne une chaîne produite par le mécanisme natif de signature. La fonction JNI transmet ce résultat à Java au moyen de `NewStringUTF`.
 
-### 22.14 Formule complète de Signature2
+### 22.17 Formules complètes des calculs
 
-La reconstitution statique du chemin étudié peut être résumée par les opérations suivantes.
+Cette section rassemble les formules distinctes établies pendant l'analyse. Elles ne doivent pas être confondues.
 
-**Étape 1 — Recherche de la valeur applicative**
+**A. Nonce ajouté aux paramètres signés**
+
+```text
+nonce_params = currentTimeMillis()
+paramsData["nonce"] = nonce_params
+```
+
+Les clés du JSON sont ensuite ordonnées et concaténées sous la forme `clé=valeur&...`.
+
+**B. requestid**
+
+La structure des appels observée dans `GetBuilder.build()` est :
+
+```text
+requestid = MD5(MD5(nonce_Builder))
+```
+
+`nonce_Builder` est le nonce initialisé par le constructeur de GetBuilder. Il est distinct de `nonce_params`.
+
+La représentation exacte du résultat intermédiaire du premier MD5 reste à confirmer dans le chemin qui calcule `requestid`. Il ne faut donc pas assimiler sans preuve cette formule à celle du digest hexadécimal utilisé dans le calcul natif de Signature2.
+
+**C. Recherche de la valeur applicative**
 
 ```text
 D1 = MD5(UTF8(appId))
@@ -3757,7 +3920,9 @@ lookup_key = lowercase_hex(D1)
 S_app = native_table[lookup_key]
 ```
 
-**Étape 2 — Dérivation de la clé HMAC**
+`D1` sert uniquement à rechercher l'entrée correspondante dans la table native.
+
+**D. Dérivation de la clé HMAC**
 
 ```text
 key_material = UTF8(access_token || S_app)
@@ -3765,15 +3930,17 @@ D2 = MD5(key_material)
 hmac_key = UTF8(lowercase_hex(D2))
 ```
 
-**Étape 3 — Construction du message**
+`D2` est le second MD5 du mécanisme de Signature2. Sa représentation hexadécimale minuscule, constituée de 32 caractères ASCII, devient la clé HMAC.
+
+**E. Construction du message**
 
 ```text
 message = UTF8(sortedParams)
 ```
 
-`sortedParams` est la chaîne obtenue par `getSortParams(JSONObject)` après insertion du nonce et tri des clés.
+`sortedParams` est la chaîne brute produite par `getSortParams(JSONObject)` après insertion du nonce et ordonnancement des clés.
 
-**Étape 4 — Signature**
+**F. Signature2**
 
 ```text
 Signature2 = HMAC-MD5(
@@ -3782,19 +3949,84 @@ Signature2 = HMAC-MD5(
 )
 ```
 
-La distinction des deux MD5 est impérative :
+En notation condensée :
 
-- `D1` sert à sélectionner une entrée dans la table native ;
-- `D2` est l'empreinte qui fournit la clé HMAC après conversion hexadécimale ;
-- le HMAC-MD5 utilise cette clé et la chaîne `sortedParams` comme message.
+\[
+D_1=MD5(UTF8(appId))
+\]
 
-La clé HMAC est constituée des 32 caractères ASCII hexadécimaux minuscules de `D2`, et non des 16 octets bruts du digest.
+\[
+S_{app}=NativeTable[hex_{lower}(D_1)]
+\]
 
-Le `requestid` calculé dans `GetBuilder.build()` constitue un calcul distinct et ne fait pas partie de cette formule de Signature2.
+\[
+D_2=MD5(UTF8(access\_token \parallel S_{app}))
+\]
 
-### 22.15 Distinction avec le chemin Ktor de Replay v4
+\[
+K=UTF8(hex_{lower}(D_2))
+\]
 
-Les analyses précédentes ont établi un chemin Ktor :
+\[
+Signature2=HMAC\text{-}MD5(K,UTF8(sortedParams))
+\]
+
+**Distinction essentielle :**
+
+- le premier MD5 identifie l'entrée de la table native ;
+- le second MD5 dérive la clé HMAC ;
+- le HMAC-MD5 calcule la signature à partir de cette clé et de `sortedParams` ;
+- `requestid` est un calcul distinct, appliqué au nonce initial du Builder.
+
+Le digest MD5 binaire de 16 octets et sa représentation hexadécimale de 32 caractères ASCII sont deux formats différents. Pour la clé HMAC de Signature2, c'est la représentation hexadécimale du second MD5 qui est utilisée.
+
+### 22.18 WyzeEventNet.z(Response) : traitement de la réponse
+
+La méthode `WyzeEventNet.u()` transmet la réponse HTTP à `WyzeEventNet.z(Response)`.
+
+La zone de code examinée pour le traitement de la réponse se situe autour des offsets `0x131ccc–0x131ed6`.
+
+La méthode construit ou renseigne un objet résultat de type `WyzeEventNet$a`, dont les accesseurs observés comprennent notamment :
+
+- `a()` : chaîne associée à l'URL ;
+- `b()` : statut HTTP ;
+- `c()` : code extrait de la réponse.
+
+Le traitement distingue les réponses nulles, les réponses HTTP 200 et les réponses non-200.
+
+**Réponse nulle**
+
+Une réponse nulle conduit à un résultat vide.
+
+**Réponse HTTP non-200**
+
+Le corps est lu et interprété comme du JSON. Le code JSON est extrait et le résultat conserve les informations de statut et de code.
+
+Dans le chemin observé, lorsque le code JSON vaut `1`, le champ `data` est extrait et placé dans l'objet résultat.
+
+Cette branche ne prouve pas qu'une réponse non-200 fournit nécessairement une URL vidéo exploitable : elle décrit uniquement le traitement du champ `data` dans cette branche.
+
+**Réponse HTTP 200**
+
+Le statut HTTP est enregistré, le corps est lu et le code JSON est analysé.
+
+Le chemin observé comprend également le traitement d'une combinaison de codes d'erreur, notamment le cas où le code analysé vaut `400` et où le code interne associé vaut `1000`, qui conduit à une erreur spécifique.
+
+Il ne faut pas présenter ce chemin HTTP 200 comme une preuve d'extraction réussie de `data` ou d'obtention d'une URL vidéo. Les éléments conservés de ce désassemblage ne permettent pas de conclure à une extraction systématique de `data` dans cette branche.
+
+**Conséquence**
+
+Le traitement de la réponse par `WyzeEventNet.z()` doit être distingué du traitement de la réponse par la coroutine Ktor `getKvsReplayUrl`.
+
+Dans le chemin Ktor, la réponse est désérialisée par le modèle `Lx9i`, dont les champs JSON comprennent `code`, `message` et `data`. La coroutine vérifie `code == 1` et la présence d'un `data` non vide avant d'émettre une chaîne comme résultat.
+
+Cette preuve propre au chemin Ktor ne doit pas être transposée automatiquement au parseur `WyzeEventNet.z()`.
+
+Aucune réponse serveur positive n'a été obtenue pendant la présente analyse statique.
+
+### 22.19 Distinction avec le chemin Ktor de Replay v4
+
+Les analyses précédentes ont établi un chemin Ktor distinct :
 
 ```text
 EventGroupViewModel
@@ -3807,9 +4039,24 @@ EventGroupViewModel
     -> HttpStatement
 ```
 
-Ce chemin ajoute notamment `resource_version` à la structure de paramètres URL Ktor.
+Ce chemin transmet notamment :
 
-Le chemin `WyzeEventNet.u()` étudié ici utilise quant à lui :
+- `device_id` ;
+- `product_model` ;
+- `start_time` ;
+- `end_time` ;
+- `is_live` ;
+- `resource_version`.
+
+La coroutine construit une requête vers :
+
+```text
+https://kvs-service.wyzecam.com/app/v4/replay_url
+```
+
+Elle ajoute `Authorization` et les paramètres URL au moyen des mécanismes Ktor précédemment étudiés.
+
+Le chemin `WyzeEventNet.u()` utilise quant à lui :
 
 ```text
 WyzeEventNet.u(...)
@@ -3819,29 +4066,49 @@ WyzeEventNet.u(...)
     -> WpkSecurityUtil.getSignature(...)
     -> WpkSecurity.getSignature(...)
     -> getSignatureByString(...)
+    -> GetBuilder.execute()
+    -> WyzeEventNet.z(Response)
 ```
 
-Les deux chemins ont été identifiés dans l'APK, et le second contient un mécanisme natif de Signature2.
+Les deux chemins sont présents dans l'APK. Le second fait intervenir le mécanisme natif de Signature2 décrit dans cette section.
 
-Il n'est pas démontré que la coroutine Ktor appelle ce mécanisme natif, ni que le chemin `WyzeEventNet.u()` est systématiquement utilisé pour toutes les opérations Replay v4.
+Il n'est pas démontré que la coroutine Ktor appelle ce mécanisme natif. Il n'est pas non plus démontré que `WyzeEventNet.u()` est systématiquement utilisé pour toutes les opérations Replay v4.
 
-Il ne faut donc pas fusionner les deux chaînes dans le journal sans preuve supplémentaire.
+Les deux chemins doivent donc rester séparés dans le journal tant que leur éventuel raccord à l'exécution n'a pas été établi.
 
-### 22.16 Matrice des preuves et des limites
+### 22.20 Relation avec la ressource KVS et resource_version
+
+Les analyses précédentes ont établi que le ViewModel sélectionne une ressource identifiée comme `kvs`, récupère ses bornes temporelles et transmet sa version à la méthode repository Ktor.
+
+La valeur de version est convertie de long en entier avant son ajout au paramètre `resource_version`.
+
+La méthode `WyzeEventNet.u()` reçoit également un entier `resource_version` et l'ajoute aux paramètres de la requête Replay v4.
+
+Ces observations montrent que les deux chemins prennent en compte une version de ressource KVS.
+
+Elles ne démontrent toutefois pas que la ressource KVS v3 observée pour `GW_BE1` est effectivement acceptée par le service Replay v4, ni que les deux chemins utilisent la même représentation de requête ou la même signature.
+
+La compatibilité effective de la ressource KVS v3 avec le service Replay reste à vérifier.
+
+### 22.21 Matrice des preuves et des limites
 
 | Point examiné | État |
 |---|---|
-| `getSortParams()` ajoute un nonce temporel | Établi |
+| `getSortParams()` ajoute un nonce temporel au JSON | Établi |
 | Le JSON initial est modifié par cette insertion | Établi |
-| Les clés sont triées avant concaténation | Établi |
+| Les clés sont ordonnées avant concaténation | Établi |
 | La chaîne est construite sous forme `clé=valeur&...` | Établi |
-| La chaîne signée est construite sans encodage URL explicite | Établi |
+| `sortedParams` est le message transmis au HMAC | Établi |
 | `appendParams()` utilise `Uri.Builder.appendQueryParameter()` | Établi |
 | Les valeurs nulles sont ignorées par `appendParams()` | Établi |
-| Le nonce du Builder est distinct du nonce ajouté au JSON | Établi |
+| Le nonce initial du Builder est distinct du nonce ajouté au JSON | Établi |
 | `requestid` utilise deux appels MD5 imbriqués sur le nonce du Builder | Établi |
+| La représentation intermédiaire du premier MD5 de `requestid` | À confirmer |
 | `appinfo` utilise le nom d'application, le suffixe Android et la version | Établi |
 | `phoneid` utilise le mécanisme `WpkSPUtil` | Établi |
+| `Signature2` est ajouté aux en-têtes par GetBuilder | Établi |
+| `Authorization` est ajouté séparément par `WyzeEventNet.u()` | Établi |
+| `access_token` est ajouté par GetBuilder lorsque l'option est activée | Établi |
 | `WpkSecurityUtil` transmet `appId`, `access_token` et `sortedParams` à la couche native | Établi |
 | Le premier MD5 sert de clé de recherche dans la table native | Établi |
 | La valeur de table est concaténée après `access_token` | Établi |
@@ -3851,39 +4118,48 @@ Il ne faut donc pas fusionner les deux chaînes dans le journal sans preuve supp
 | Le HMAC reçoit `sortedParams` comme message | Établi |
 | Le HMAC reçoit le second MD5 hexadécimal comme clé | Établi |
 | `initKey()` parcourt 127 enregistrements statiques | Établi |
+| La reconstruction utilise les opérations XOR décrites | Établi |
 | La reconstruction utilise Base64 puis XXTEA | Établi |
 | Le déchiffrement vérifie la longueur de sortie | Établi |
-| La valeur secrète reconstruite est publiée dans ce journal | Non : volontairement exclue |
+| L'entrée applicative correspondante a été localisée dans la table | Établi |
+| Une vérification indépendante hors ligne a confirmé la longueur de sortie | Établi |
+| Les valeurs secrètes sont publiées dans ce journal | Non : volontairement exclues |
+| `WyzeEventNet.u()` construit une requête GET vers Replay v4 | Établi statiquement |
+| `WyzeEventNet.u()` ajoute les six paramètres documentés | Établi statiquement |
+| `WyzeEventNet.u()` exécute le Builder et transmet la réponse à `z(Response)` | Établi statiquement |
+| Le chemin HTTP 200 de `z(Response)` démontre une URL vidéo exploitable | Non démontré |
 | Le serveur Wyze accepte la signature calculée | Non démontré |
 | Le mécanisme est utilisé par toutes les requêtes Replay v4 | Non démontré |
 | Le chemin Ktor utilise nécessairement le même mécanisme natif | Non démontré |
-| La ressource KVS v3 de GW_BE1 est acceptée par le service Replay | Non démontré |
+| La ressource KVS v3 de `GW_BE1` est acceptée par le service Replay | Non démontré |
 | Une URL de lecture exploitable a été obtenue | Non démontré |
 | Un manifeste ou un clip a été récupéré | Non démontré |
 
-### 22.17 Conclusion et statut au 28 novembre 2026
+### 22.22 Conclusion et statut au 28 novembre 2026
 
-L'analyse statique a permis de reconstituer le mécanisme de génération de Signature2 dans le chemin `WpkSignature2Service`.
+L'analyse statique a permis de reconstituer le mécanisme de génération de Signature2 utilisé par le chemin `WpkSignature2Service`, et de le raccorder à son appelant `WyzeEventNet.u()`.
 
-La construction comporte plusieurs étapes distinctes :
+Le mécanisme cryptographique comporte les opérations distinctes suivantes :
 
-1. insertion d'un nonce temporel et tri des paramètres ;
-2. construction d'une chaîne brute `clé=valeur&...` ;
-3. construction séparée des paramètres URL ;
-4. calcul du `requestid` à partir du nonce propre au Builder ;
-5. recherche d'une valeur applicative dans une table native au moyen de `MD5(appId)` ;
-6. concaténation du jeton d'accès et de cette valeur ;
-7. second MD5 et conversion en 32 caractères hexadécimaux minuscules ;
-8. HMAC-MD5 de la chaîne `sortedParams` avec cette représentation hexadécimale comme clé.
+1. insertion d'un nonce temporel dans le JSON des paramètres ;
+2. ordonnancement des clés et construction de `sortedParams` ;
+3. calcul indépendant de `requestid` à partir du nonce initial du Builder ;
+4. calcul de `MD5(appId)` et recherche de l'entrée correspondante dans la table native ;
+5. concaténation du jeton d'accès et de la valeur applicative récupérée ;
+6. second MD5 et conversion de son résultat en 32 caractères hexadécimaux minuscules ;
+7. HMAC-MD5 de `sortedParams` avec cette représentation hexadécimale comme clé ;
+8. insertion de `Signature2` dans les en-têtes de la requête.
 
-La reconstruction de la table native, le décodage Base64, le déchiffrement XXTEA et la fonction HMAC-MD5 ont été examinés statiquement. Une vérification indépendante hors ligne a confirmé la longueur de sortie attendue pour l'entrée étudiée.
+La préparation de la table native, le décodage Base64, le déchiffrement XXTEA et la fonction HMAC-MD5 ont été examinés statiquement. Une vérification indépendante hors ligne a confirmé la longueur de sortie attendue pour l'entrée étudiée.
 
-Cette conclusion concerne le mécanisme interne de génération de signature. Elle ne démontre pas l'acceptation de la signature par le serveur Wyze, l'obtention d'une URL Replay v4, ni la récupération d'un clip.
+Le raccord avec `WyzeEventNet.u()` établit la construction d'une requête GET vers `/app/v4/replay_url`, avec les six paramètres documentés et l'en-tête `Authorization`. La réponse est ensuite traitée par `WyzeEventNet.z(Response)`, dont les branches HTTP 200 et non-200 ne doivent pas être confondues.
 
-Elle ne démontre pas non plus l'identité du mécanisme employé par le chemin Ktor précédemment étudié.
+Cette reconstitution ne démontre pas l'acceptation de la signature par le serveur Wyze, l'obtention d'une URL Replay v4 exploitable, ni la récupération d'un clip.
 
-**Statut :** mécanisme de Signature2 reconstitué statiquement pour le chemin `WpkSignature2Service` ; aucune validation serveur ; aucun appel réseau ; aucune récupération vidéo ; aucun changement de production.
+Elle ne démontre pas non plus que le chemin Ktor utilise le même mécanisme natif, ni que la ressource KVS v3 de `GW_BE1` est acceptée par le service Replay.
 
-La prochaine vérification devra rester statique et porter sur le raccord exact entre `WyzeEventNet.u()` et les données d'événement utilisées par l'application, puis sur les différences éventuelles entre ce chemin et le chemin Ktor.
+**Statut au 28 novembre 2026 :** mécanisme de Signature2 reconstitué statiquement pour le chemin `WpkSignature2Service` et raccordé à l'appelant `WyzeEventNet.u()` ; traitement de la réponse analysé avec des limites explicites ; aucune validation serveur ; aucun appel réseau ; aucune récupération vidéo ; aucun changement de production.
 
-Les secrets et matériaux de dérivation restent exclus du journal public.
+La prochaine vérification doit rester statique et porter sur les différences entre les deux chemins Replay v4, ainsi que sur les éléments encore non démontrés concernant la réponse et la compatibilité de la ressource KVS v3.
+
+Les secrets, clés natives, données déchiffrées et matériaux de dérivation restent exclus du journal public.
