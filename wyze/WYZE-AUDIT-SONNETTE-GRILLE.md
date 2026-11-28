@@ -4440,3 +4440,191 @@ Elle ne démontre pas non plus que le chemin Ktor utilise le même mécanisme na
 La prochaine vérification doit rester statique et porter sur les différences entre les deux chemins Replay v4, ainsi que sur les éléments encore non démontrés concernant la réponse et la compatibilité de la ressource KVS v3.
 
 Les secrets, clés natives, données déchiffrées et matériaux de dérivation restent exclus du journal public.
+
+## 23. FICHE DE REPRISE AUTONOME — ÉTAT AU 28 NOVEMBRE 2026
+
+### 23.1. Objet et priorité du projet
+
+Objectif principal : mettre en place sur le NAS Synology SERVOR un archivage automatique des vidéos d'événements cloud Wyze Cam Plus / Web View de la sonnette **GW_BE1 — Sonnette Grille**, avant leur expiration de la rétention cloud (environ 15 jours).
+
+Le résultat recherché n'est pas simplement de reconstituer une API ou de produire une URL théorique : il faut parvenir à récupérer effectivement une vidéo d'événement de la sonnette, la télécharger, vérifier son intégrité et la conserver sur le NAS.
+
+Périmètre actuel :
+- Uniquement la sonnette GW_BE1 / Sonnette Grille.
+- Les deux anciennes Outdoor Cams sont hors périmètre tant qu'elles ne sont pas réparées et que leur intégration n'a pas été explicitement autorisée.
+- Pas de flux permanent, RTSP, ONVIF, WebRTC, capture continue ou surveillance permanente.
+- Le fonctionnement final doit être centralisé sur le NAS autant que possible, sans intervention régulière dans l'application Wyze ou dans un navigateur.
+
+### 23.2. Règles impératives de travail
+
+Ces règles s'appliquent à tout assistant reprenant le projet, y compris ChatGPT, Claude, Gemini ou un autre outil.
+
+1. **Aucun appel réseau vers Wyze sans autorisation explicite préalable.** La reconstitution statique actuelle ne constitue pas une autorisation de tester l'API.
+2. Aucun téléchargement de vidéo, aucune demande de replay et aucune expérimentation susceptible de solliciter le compte Wyze sans accord explicite.
+3. Aucune modification de production sur SERVOR, DSM, Docker, les montages NAS ou les services existants sans validation explicite.
+4. Aucune installation de logiciel ou d'outil sans autorisation.
+5. Analyse de l'APK et de la bibliothèque native hors ligne uniquement. Ne jamais exécuter `libwyze_olive-lib.so`.
+6. Ne jamais publier de jeton, mot de passe, clé, valeur native reconstituée, matériau de dérivation, contenu Base64 sensible ou donnée permettant de reproduire les secrets de signature.
+7. Ne pas confondre les conclusions statiques avec des résultats obtenus par exécution réelle.
+8. Ne pas considérer un MP4 synthétique comme la preuve qu'une vidéo Wyze réelle a été récupérée ou reconstruite.
+9. Ne pas supposer qu'une ancienne commande, une ancienne réponse ou un ancien état local est encore valable. Vérifier avant de poursuivre.
+10. L'utilisateur conserve la maîtrise des modifications du dépôt GitHub et des commits. Ne pas modifier le dépôt sans demande explicite.
+
+### 23.3. Environnement de travail
+
+**Mac mini**
+- Nom : `minimac`.
+- Machine Apple Silicon, décrite par l'utilisateur comme M5 Pro, 64 Go de mémoire, SSD 512 Go.
+- Compte utilisateur : `florian`.
+- Répertoire principal de l'audit APK :
+  `$HOME/wyze-apk-audit-2026-11-25`
+- Cross-references DEX :
+  `$HOME/wyze-apk-audit-2026-11-25/dex-work/crossrefs/`
+- Dossier de preuves Replay v4 :
+  `$HOME/wyze-apk-audit-2026-11-25/evidence-replay-v4`
+- Bibliothèque native extraite :
+  `/tmp/libwyze_olive-lib.so`
+- Attention : `/tmp` est temporaire. Ne pas considérer son contenu comme une archive durable.
+
+**Téléphone de référence**
+- Vivo 2006NG.
+- APK Wyze 3.26.0.1046, versionCode 62746.
+- Installation auditée le 25 novembre 2026.
+- Les fichiers APK et DEX locaux doivent être vérifiés avant toute nouvelle analyse.
+
+**NAS**
+- Nom : SERVOR.
+- Synology DS1525neo+.
+- DSM 7.4.1 build 90080.
+- Adresse LAN : `192.168.1.103`.
+- Dossier d'archive cible :
+  `/volume1/Wyze-Archive`
+- Aucun changement de production ne doit être entrepris sans accord.
+
+### 23.4. Référentiel documentaire
+
+Rapport central :
+`https://github.com/testuflo-ft/docs-serveur-ia/blob/main/wyze/WYZE-AUDIT-SONNETTE-GRILLE.md`
+
+État consulté le 28 novembre 2026 :
+- Branche : `main`.
+- SHA du fichier : `177126f8fcf1b464b45c9162f0f6856cd7c984bf`.
+- Taille : 4 443 lignes.
+- Dernière section technique : §22.22.
+- Reconstruction algorithmique des buffers `key` et `encoded` : §22.13 bis.
+
+**Important :** ce SHA est un point de référence historique, pas une garantie que le document est toujours identique. À chaque reprise, récupérer le fichier courant et son SHA avant de travailler. Les sections §16, §18.8 et §19.7 contiennent des points de reprise plus anciens : ne pas les utiliser comme état courant sans les comparer aux dernières sections.
+
+Les preuves détaillées sont dans le rapport et dans le dossier local `evidence-replay-v4`. Les fichiers locaux doivent être vérifiés par leur présence et leurs empreintes avant d'être utilisés comme preuves.
+
+### 23.5. Résultats établis — analyse statique
+
+Les éléments suivants sont établis par l'analyse de l'APK Wyze 3.26.0.1046 et de sa bibliothèque native.
+
+**A. Ressource KVS**
+- Le serializer `Lepu$a` enregistre `resource_version` à l'index 1.
+- `Lepu.g()` retourne cette valeur sous forme de `long`.
+- Le ViewModel la convertit en `int` avant de la transmettre au repository.
+- La valeur est transmise comme paramètre `resource_version`.
+- La sélection du chemin KVS est conditionnée par `Lepu.f() == "kvs"`.
+
+**B. Chemin Ktor**
+- L'implémentation `EventGroupRepositoryRemoteImplementation` construit une requête vers :
+  `https://kvs-service.wyzecam.com/app/v4/replay_url`
+- Les paramètres identifiés sont :
+  `device_id`, `product_model`, `start_time`, `end_time`, `is_live`, `resource_version`.
+- Un en-tête Authorization est ajouté.
+- Le paramètre `resource_version` est converti en chaîne par le mécanisme Ktor.
+- La réponse est désérialisée en `KvsReplayUrlResponse`, avec les champs `code`, `message` et `data`.
+- Le chemin attend `code == 1` et une valeur `data` non vide pour produire un résultat positif.
+
+**C. Chemin WyzeEventNet**
+- `WyzeEventNet.u(String,String,long,long,boolean,int)` construit également une requête Replay v4.
+- Il utilise le même endpoint `/app/v4/replay_url`.
+- Il ajoute les paramètres de requête identifiés et un en-tête Authorization.
+- La réponse passe par `WyzeEventNet.z(Response)`.
+- Les traitements des réponses HTTP non 200 et HTTP 200 ont été analysés partiellement et sont documentés dans la section 22.
+
+**D. Signature2**
+- Le chemin de construction de la signature a été suivi dans `GetBuilder.build()`, `WpkSignature2Service`, `WpkSecurityUtil` et la bibliothèque native.
+- La fonction native `getSignatureByString` a été désassemblée.
+- Le rôle de MD5, de HMAC-MD5 et de la chaîne `sortedParams` a été établi.
+- La construction algorithmique des buffers internes a été reconstituée.
+- La reconstruction est documentée en §22.13 bis et dans les sections suivantes.
+- Les valeurs secrètes et matériaux permettant de reproduire la clé ne doivent pas être recopiés dans ce document public.
+
+### 23.6. Ce qui n'est PAS démontré
+
+Les points suivants restent ouverts et ne doivent pas être présentés comme acquis :
+
+1. Le succès d'une requête Replay v4 avec les paramètres d'un événement réel de la sonnette.
+2. La validité de la signature reconstruite auprès du serveur Wyze.
+3. Le raccordement effectif du chemin Ktor à `WyzeEventNet.u()`. Ce sont deux chemins identifiés, mais leur relation exacte n'est pas établie.
+4. La compatibilité opérationnelle entre les ressources KVS v3 observées dans les événements et le endpoint Replay v4.
+5. La forme exacte et le contenu de la valeur `data` d'une réponse positive réelle.
+6. La durée de validité d'une éventuelle URL de replay.
+7. Le mécanisme exact de récupération des octets vidéo une fois l'URL obtenue.
+8. Le format réel des données vidéo récupérées : fichier direct, fragments, manifeste ou autre mécanisme.
+9. La reconstruction complète et la validation d'un MP4 à partir d'une vidéo Wyze réelle.
+10. La possibilité d'effectuer l'ensemble du processus de manière autonome depuis SERVOR.
+
+**Une analyse statique, même complète, ne démontre pas que le serveur acceptera la requête.**
+
+### 23.7. Prochaine étape technique recommandée
+
+La prochaine étape doit rester une analyse statique ciblée :
+
+**Comparer précisément le chemin Ktor et le chemin `WyzeEventNet.u()` pour comprendre pourquoi l'application contient deux implémentations du même endpoint Replay v4 et déterminer laquelle est effectivement utilisée par le parcours de lecture vidéo.**
+
+Travail attendu :
+1. Repartir des callsites déjà identifiés dans le DEX.
+2. Remonter les appels et les dépendances de chaque implémentation.
+3. Identifier les conditions de sélection du chemin utilisé.
+4. Comparer les paramètres, les en-têtes, la construction de la signature et le traitement de la réponse.
+5. Identifier les différences qui pourraient expliquer des comportements distincts.
+6. Déterminer si les deux chemins sont indépendants, alternatifs, complémentaires ou liés par une couche intermédiaire.
+7. Consigner les preuves précises (fichier, classe, méthode, offset ou lignes) et distinguer les déductions des faits directement observés.
+
+Ne pas lancer de requête réseau pour résoudre une incertitude statique tant que l'utilisateur n'a pas donné son accord.
+
+### 23.8. Objectif opérationnel à terme
+
+Une fois l'analyse statique suffisamment consolidée et après autorisation explicite de l'utilisateur, le parcours de validation pourra être envisagé par étapes :
+
+1. Sélectionner un événement réel récent de `GW_BE1`.
+2. Vérifier ses paramètres et ses ressources à partir des données déjà disponibles.
+3. Préparer une requête Replay v4 conforme au comportement de l'application.
+4. Effectuer, si autorisé, un unique test contrôlé et documenté.
+5. Vérifier la réponse HTTP et son contenu sans publier de données sensibles.
+6. Si une URL est renvoyée, déterminer le mécanisme de récupération vidéo et ses contraintes de validité.
+7. Télécharger un seul clip, uniquement après validation explicite.
+8. Vérifier le fichier avec `ffprobe`, puis contrôler son décodage.
+9. Documenter les résultats avant d'envisager une automatisation.
+10. Tester ensuite le stockage et l'archivage sur un emplacement de laboratoire, avant toute intégration à la production NAS.
+
+Le premier objectif opérationnel est modeste mais décisif : **obtenir et valider une seule vidéo réelle de la Sonnette Grille.** L'automatisation et les autres caméras viennent après.
+
+### 23.9. Protocole de reprise par un nouvel assistant
+
+À chaque nouvelle session :
+
+1. Lire intégralement la présente fiche §23.
+2. Récupérer la version actuelle du rapport GitHub et relever son SHA.
+3. Lire les dernières sections du rapport, en particulier §21 et §22, ainsi que les éventuelles sections ajoutées après cette fiche.
+4. Comparer les conclusions récentes avec celles de cette fiche. En cas de contradiction, privilégier les preuves les plus récentes et les plus directement vérifiables.
+5. Vérifier la présence des fichiers locaux nécessaires avant de demander à l'utilisateur de les rechercher.
+6. Vérifier les empreintes des fichiers de preuve lorsqu'elles sont disponibles.
+7. Identifier clairement la machine concernée avant de proposer une commande : Mac mini ou SERVOR.
+8. Ne pas installer d'outil. Vérifier d'abord les outils déjà présents.
+9. Présenter le constat actuel et proposer une seule commande ou une seule action à la fois.
+10. Attendre le résultat de l'utilisateur avant de poursuivre.
+11. Consigner toute nouvelle conclusion dans le rapport avec sa preuve, son niveau de certitude et ses limites.
+12. Ne jamais prétendre qu'une opération réseau, un téléchargement ou une modification a été effectué si ce n'est pas le cas.
+
+### 23.10. Principe directeur
+
+La priorité est désormais de transformer les résultats de rétro-ingénierie en une récupération vidéo réelle, sans brûler les étapes.
+
+Il faut avancer vers un premier téléchargement effectif, mais ne pas sacrifier la sécurité du compte Wyze, la stabilité du NAS ou la qualité des preuves pour aller plus vite.
+
+**État au 28 novembre 2026 :** mécanisme de signature reconstitué statiquement ; chemins Replay v4 identifiés ; récupération réelle d'une vidéo non démontrée ; aucun nouveau test réseau autorisé par cette fiche.
